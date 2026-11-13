@@ -13,22 +13,106 @@ open /Applications/Filsynk.app
 
 Skriptet bygger `build/Filsynk.app`, signerar den och kopierar den till `/Applications`. Utan `--install` byggs bara `build/Filsynk.app`. Appen är inte notariserad och går inte att dela med andra som den är.
 
-### Signering
-
-Utan vidare signeras appen lokalt, utan certifikat. Då ser macOS varje nytt bygge som en ny app, och tillstånden för notiser, start vid inloggning och det lokala nätverket kan behöva ges om efter en ombyggnad.
-
-Med ett utvecklarcertifikat ligger tillstånden kvar mellan byggen. Ange certifikatet på ett av två sätt:
-
-- miljövariabeln `FILSYNK_SIGN_IDENTITY`, eller
-- första raden i filen `.signing-identity` i projektmappen. Filen checkas inte in.
-
-Värdet är certifikatets namn eller SHA-1-hash, så som `security find-identity -v -p codesigning` visar dem. Ett certifikat av typen Apple Development räcker för den egna Macen. För att köra appen på en annan dator krävs Developer ID Application och notarisering.
-
-Första bygget med certifikat räknas som en ny app, så tillstånden ges en gång till.
-
 Appikonen ligger i `Resources/AppIcon.icns` och ritas av `swift scripts/make-icon.swift`. Kör skriptet igen om du ändrar ritningen.
 
 "Starta vid inloggning" slås på av sig själv vid första start, men bara om appen körs från `/Applications`. Notisfrågan från macOS kommer första gången en notis ska visas.
+
+## Signering
+
+Byggskriptet signerar alltid appen. Frågan är bara om det sker med eller utan certifikat. Appen fungerar lika bra i båda fallen.
+
+### Varför signera med certifikat
+
+- **Utan certifikat** ser macOS varje nytt bygge som en ny app. Tillstånden för notiser, start vid inloggning, det lokala nätverket och skyddade mappar som Dokument kan då behöva ges om efter varje ombyggnad.
+- **Med certifikat** knyts tillstånden till teamet och appens id (`com.freberdev.filsynk`) i stället för till det enskilda bygget, och ligger kvar mellan byggen. Under Inloggningsobjekt står appen med utvecklarens namn.
+
+Skriptet notariserar inte appen. Den går alltså inte att dela med andra som den är, med eller utan certifikat.
+
+### Vilket certifikat
+
+- **Apple Development** räcker för den egna Macen. Xcode skapar det under Settings > Accounts > Manage Certificates > `+` > Apple Development. Det gäller i ett år.
+- **Developer ID Application** krävs för att köra appen på en annan dator utan varningar, tillsammans med notarisering. Det förutsätter ett betalt utvecklarkonto, och bara kontoinnehavaren kan skapa det.
+
+### Hitta certifikatets namn och hash
+
+```bash
+security find-identity -v -p codesigning
+```
+
+Utskriften har en rad per giltigt certifikat:
+
+```
+  1) 0123456789ABCDEF0123456789ABCDEF01234567 "Apple Development: Ditt Namn (ABCDE12345)"
+     1 valid identities found
+```
+
+De 40 tecknen först är hashen, och texten inom citattecken är namnet. Båda går att använda.
+
+Finns det flera certifikat, för olika team, väljer du det team appen ska höra till. Vilket team ett certifikat tillhör syns i fälten `O` (organisation) och `OU` (team-id):
+
+```bash
+security find-certificate -c "Apple Development: Ditt Namn (ABCDE12345)" -p | openssl x509 -noout -subject
+```
+
+### Ange certifikatet
+
+Det finns två sätt. Miljövariabeln går före filen. Någon `.env`-fil läses inte.
+
+**1. Filen `.signing-identity`** i projektmappen, alltså samma mapp som `Package.swift`. Första raden ska vara certifikatets namn eller hash, och inget annat. Filen ignoreras av git och checkas aldrig in.
+
+```bash
+echo "0123456789ABCDEF0123456789ABCDEF01234567" > .signing-identity
+```
+
+Därefter signerar `scripts/build-app.sh` med certifikatet varje gång, utan fler åtgärder.
+
+**2. Miljövariabeln `FILSYNK_SIGN_IDENTITY`**, för ett enstaka bygge:
+
+```bash
+FILSYNK_SIGN_IDENTITY="Apple Development: Ditt Namn (ABCDE12345)" scripts/build-app.sh --install
+```
+
+Ska den gälla alltid lägger du raden `export FILSYNK_SIGN_IDENTITY="…"` i `~/.zshrc`.
+
+För att gå tillbaka till signering utan certifikat tar du bort `.signing-identity`, eller sätter `FILSYNK_SIGN_IDENTITY=-` för ett enstaka bygge.
+
+**Namn eller hash?** Hashen pekar alltid ut exakt ett certifikat, men den byts när certifikatet förnyas. Namnet brukar överleva en förnyelse, men det fungerar inte om två certifikat har samma namn.
+
+### Kontrollera signaturen
+
+Byggskriptet avslutar med `(signed with a certificate)` eller `(signed ad hoc)`. Den installerade appen kontrolleras så här:
+
+```bash
+codesign -dv --verbose=2 /Applications/Filsynk.app
+```
+
+- Med certifikat: `Authority=Apple Development: …` och `TeamIdentifier=` följt av team-id.
+- Utan certifikat: `Signature=adhoc` och `TeamIdentifier=not set`.
+
+```bash
+codesign --verify --strict /Applications/Filsynk.app
+```
+
+Ingen utskrift betyder att signaturen är giltig.
+
+### Efter första bygget med certifikat
+
+Första gången appen signeras med ett certifikat räknar macOS den som en ny app. Detsamma gäller om du byter certifikat, team eller appens id. Gör då detta en gång:
+
+1. Slå på "Starta vid inloggning" i Filsynks inställningar. Det slås bara på av sig självt vid allra första start.
+2. Titta under Systeminställningar > Allmänt > Inloggningsobjekt och ta bort en eventuell äldre Filsynk-post.
+3. Godkänn notiser när macOS frågar, vilket sker första gången en notis ska visas.
+
+Därefter ligger tillstånden kvar mellan byggen.
+
+### Felsökning
+
+| Meddelande | Orsak och åtgärd |
+|---|---|
+| `no identity found` | Namnet eller hashen stämmer inte, eller certifikatet har gått ut. Kör `security find-identity -v -p codesigning` och rätta `.signing-identity`. Har certifikatet gått ut förnyar du det i Xcode. Bygget avbryts, och ingen osignerad app installeras i stället. |
+| `ambiguous (matches … and …)` | Flera certifikat matchar namnet. Ange hashen i stället. |
+| macOS frågar om `codesign` får använda nyckeln | Välj Tillåt alltid. |
+| `errSecInternalComponent` | Nyckelringen är låst, till exempel vid inloggning över SSH. Lås upp den med `security unlock-keychain`. |
 
 ## Anslutning
 
