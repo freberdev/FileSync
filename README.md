@@ -370,6 +370,14 @@ FILSYNK_E2E_SERVER=användare@server FILSYNK_E2E_IDENTITY=~/.ssh/filsynk_ed25519
 
 Det använder en temporär lokal mapp och en egen katalog `~/filsynk-interop-e2e-<slumptal>` på servern, som tas bort efteråt. `~/Sync` rörs aldrig. Skriptet `scripts/verify-rsync-interop.sh <server> <nyckel>` provar bara rsync-flaggorna mot servern.
 
+Ytterligare ett prov kör hela kedjan mot riktiga volymer, utan någon fysisk disk (`DiskImageTests`). Det skapar egna diskavbilder (APFS och exFAT, 40 MB) i en temporär katalog, monterar dem där med `hdiutil attach -mountrandom` och kopplar loss dem igen efteråt. Så hamnar inget under `/Volumes` och en riktig extern disk rörs aldrig. Det provar synk till båda formaten, att överskrivna och raderade filer hamnar i `Raderat/`, svenska filnamn och symboliska länkar på exFAT, att en disk som kopplas in igen hämtar ikapp av sig själv, och att en annan avbild med samma namn men annat id lämnas ifred. Det körs bara när du ber om det:
+
+```bash
+FILSYNK_DISK_IMAGE_TESTS=1 swift test --filter DiskImageTests
+```
+
+Avbilderna monteras utan `-nobrowse`, eftersom Filsynk inte ser dolda volymer. Det tar ungefär en minut och en avbild kan synas en stund i Finder.
+
 ## Checklista
 
 Gör detta en gång. Anteckna det som inte stämmer. `användare@server` och `/home/användare` står för din egen server, `Backupdisk` för din egen externa disk.
