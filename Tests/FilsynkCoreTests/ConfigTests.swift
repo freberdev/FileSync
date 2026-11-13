@@ -74,3 +74,9 @@ import Foundation
         #expect(try String(contentsOf: url, encoding: .utf8) == "{ not json")
     }
 }
+
+extension ConfigTests {
+    @Test func parsesCommaSeparatedExcludes() { #expect(Config.parseExcludes(" node_modules, *.tmp ,, ") == ["node_modules", "*.tmp"]) }
+    @Test func excludesTextRoundTrips() { var c = Config.initial(home: "/a"); c.exclude = ["a", "b"]; #expect(Config.parseExcludes(c.excludesText()) == ["a", "b"]) }
+    @Test func emptyExcludesText() { #expect(Config.parseExcludes("").isEmpty); #expect(Config.initial(home: "/a").excludesText() == "") }
+}

@@ -5,7 +5,7 @@ public enum ConfigError: Error, Equatable {
 }
 
 public struct ConfigStore: Sendable {
-    private let url: URL
+    public let url: URL
 
     public init(url: URL) {
         self.url = url

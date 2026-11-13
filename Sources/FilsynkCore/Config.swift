@@ -1,6 +1,7 @@
 import Foundation
 
-public struct FolderConfig: Codable, Equatable, Sendable {
+public struct FolderConfig: Codable, Equatable, Sendable, Identifiable {
+    public var id: String { path }
     /// Absolute local path.
     public var path: String
     /// Absolute once ready; "~/…" until the connection has been tested.
@@ -63,6 +64,16 @@ public struct Config: Codable, Equatable, Sendable {
     public static func initial(home: String) -> Config {
         Config(folders: [FolderConfig(path: home + "/Sync", remotePath: "~/Sync")])
     }
+
+    /// Splits a comma-separated field into patterns: whitespace trimmed, empty entries dropped.
+    public static func parseExcludes(_ text: String) -> [String] {
+        text.split(separator: ",", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// The `exclude` list as shown in the settings field.
+    public func excludesText() -> String { exclude.joined(separator: ", ") }
 
     public var expandedIdentityFile: String { Config.expandTilde(identityFile) }
 

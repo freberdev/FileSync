@@ -16,8 +16,7 @@ struct FilsynkApp: App {
         .menuBarExtraStyle(.menu)
 
         Window("Filsynk — Inställningar", id: "settings") {
-            Text("Inställningar kommer snart")
-                .padding(40)
+            SettingsView(model: model)
         }
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)

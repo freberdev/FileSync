@@ -2,6 +2,10 @@ import AppKit
 import Observation
 import FilsynkCore
 
+enum ConnectionState: Equatable {
+    case unknown, testing, ok(String), problem(String)
+}
+
 @MainActor @Observable final class AppModel {
     private(set) var status: EngineStatus = .empty
     var config: Config
@@ -9,6 +13,13 @@ import FilsynkCore
     private(set) var isFirstStart = false
 
     private(set) var hasStarted = false
+    var connection: ConnectionState = .unknown
+    /// Set when the last test found the server rejecting the key; the settings window shows the command to run.
+    private(set) var needsKeyInstall = false
+    /// Validation or save error from the latest change; shown in red at the bottom of the settings window.
+    private(set) var issue: String?
+    /// Warnings from the latest added folder.
+    private(set) var folderWarnings: [String] = []
 
     var isPaused: Bool { status.isPaused }
 
@@ -18,6 +29,7 @@ import FilsynkCore
     @ObservationIgnored private let store: ConfigStore
     @ObservationIgnored private let log: FileLog
     @ObservationIgnored private let notifier: Notifier
+    @ObservationIgnored private let flow = SetupFlow(process: SystemProcessRunner())
 
     init(store: ConfigStore = ConfigStore(url: ConfigStore.defaultURL), log: FileLog = FileLog(url: FileLog.defaultURL)) {
         self.store = store
@@ -30,7 +42,7 @@ import FilsynkCore
         guard !hasStarted else { return }
         hasStarted = true
         log.write("Filsynk startar")
-        let firstStart = !FileManager.default.fileExists(atPath: ConfigStore.defaultURL.path)
+        let firstStart = !FileManager.default.fileExists(atPath: store.url.path)
         do {
             config = try store.load()
         } catch {
@@ -62,10 +74,78 @@ import FilsynkCore
         configError = nil
         if let engine {
             Task { await engine.reload(newConfig) }
-        } else {
+        } else if hasStarted {
             makeEngine()
         }
+        // Before start() there is no engine to create; start() loads the saved file and makes it.
         return nil
+    }
+
+    // MARK: Settings
+
+    /// Saves a change from the settings window; records the error to show when it is invalid.
+    func change(_ edit: (inout Config) -> Void) {
+        var updated = config
+        edit(&updated)
+        guard updated != config else { return }
+        issue = apply(updated)
+    }
+
+    func setServer(_ server: String) {
+        let trimmed = server.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed != config.server else { return }
+        connection = .unknown
+        needsKeyInstall = false
+        change { $0.server = trimmed }
+    }
+
+    func setExcludes(_ text: String) {
+        change { $0.exclude = Config.parseExcludes(text) }
+    }
+
+    var copyIdCommand: String {
+        ConnectionSetup.copyIdCommand(identityFile: config.identityFile, server: config.server)
+    }
+
+    func testConnection() async {
+        connection = .testing
+        needsKeyInstall = false
+        let outcome = await flow.connect(config)
+        if outcome.config != config { issue = apply(outcome.config) }
+        switch outcome.result {
+        case .ok(let version): connection = .ok("✓ Ansluten, rsync \(version)")
+        case .authDenied:
+            needsKeyInstall = true
+            connection = .problem("Servern accepterar inte nyckeln ännu. Kör kommandot nedan i Terminal och testa igen.")
+        case .unreachable: connection = .problem("Servern nås inte.")
+        case .unsupportedRsync(let m): connection = .problem("Servern behöver rsync 3 eller senare. \(m)")
+        case .failed(let m): connection = .problem(m)
+        }
+    }
+
+    /// Returns nil if the folder was rejected (see `issue`), otherwise the inspection report.
+    func addFolder(localPath: String, remoteEntered: String) async -> FolderReport? {
+        folderWarnings = []
+        switch await flow.addFolder(to: config, localPath: localPath, remoteEntered: remoteEntered) {
+        case .rejected(let message):
+            issue = message
+            return nil
+        case .added(let updated):
+            issue = apply(updated)
+            if issue != nil { return nil }
+            let report = await Task.detached { FolderInspector.inspect(path: localPath) }.value
+            folderWarnings = report.warnings
+            return report
+        }
+    }
+
+    func removeFolder(_ folder: FolderConfig) {
+        issue = apply(SetupFlow.removeFolder(folder, from: config))
+        folderWarnings = []
+    }
+
+    func state(of folder: FolderConfig) -> FolderStatus? {
+        status.folders.first { $0.path == folder.path }
     }
 
     func syncNow() {
@@ -96,6 +176,7 @@ import FilsynkCore
     // MARK: Engine
 
     private func makeEngine() {
+        guard engine == nil else { return }
         let log = self.log
         let notifier = self.notifier
         let runner = SyncRunner(process: SystemProcessRunner(), log: { log.write($0) })
