@@ -18,9 +18,11 @@ public enum ConnectionError: Error, Equatable, Sendable {
 
 public struct ConnectionSetup: Sendable {
     private let process: any ProcessRunning
+    private let log: (@Sendable (String) -> Void)?
 
-    public init(process: any ProcessRunning) {
+    public init(process: any ProcessRunning, log: (@Sendable (String) -> Void)? = nil) {
         self.process = process
+        self.log = log
     }
 
     /// Creates the key pair when `identityFile` does not exist. Never overwrites. Returns true if created.
@@ -41,12 +43,13 @@ public struct ConnectionSetup: Sendable {
     }
 
     public func check(server: String, identityFile: String) async -> ConnectionResult {
-        if server.isEmpty || Config.isUnsafeServer(server) { return .failed("Serveradressen är ogiltig") }
+        if server.isEmpty || !Config.isSafeServer(server) { return .failed("Serveradressen är ogiltig") }
         let result: ProcessResult
         do {
             result = try await remote(server: server, identityFile: identityFile, command: "rsync --version")
         } catch {
-            return .failed("\(error)")
+            log?("Kunde inte starta ssh: \(error)")
+            return .failed("Kunde inte starta ssh: \(error.localizedDescription)")
         }
 
         if result.exitCode == 0 {
@@ -70,10 +73,13 @@ public struct ConnectionSetup: Sendable {
         }
     }
 
-    /// Creates the folder on the server if needed and returns its absolute, symlink-resolved path.
-    public func resolveRemotePath(_ entered: String, server: String, identityFile: String) async throws -> String {
-        if server.isEmpty || Config.isUnsafeServer(server) { throw ConnectionError.unsafeServer }
-        if Config.isUnsafe(entered) { throw ConnectionError.unsafePath(entered) }
+    /// Creates the folder on the server if needed and returns its absolute, symlink-resolved path
+    /// together with the remote home directory.
+    public func resolveRemotePath(
+        _ entered: String, server: String, identityFile: String
+    ) async throws -> (path: String, home: String) {
+        if server.isEmpty || !Config.isSafeServer(server) { throw ConnectionError.unsafeServer }
+        if !Config.isSafeRemotePath(entered) { throw ConnectionError.unsafePath(entered) }
 
         let quoted: String
         if entered == "~" {
@@ -104,7 +110,22 @@ public struct ConnectionSetup: Sendable {
         if pathParts.count <= homeParts.count, Array(homeParts.prefix(pathParts.count)) == pathParts {
             throw ConnectionError.pathTooBroad
         }
-        return line
+        return (line, home)
+    }
+
+    /// The remote home directory with symlinks resolved.
+    public func remoteHome(server: String, identityFile: String) async throws -> String {
+        if server.isEmpty || !Config.isSafeServer(server) { throw ConnectionError.unsafeServer }
+        let result = try await remote(server: server, identityFile: identityFile, command: "cd && pwd -P")
+        guard result.exitCode == 0 else {
+            throw ConnectionError.remoteCommandFailed(
+                OutcomeClassifier.classify(exitCode: result.exitCode, stderr: result.stderr))
+        }
+        let lines = result.stdout.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard let home = lines.last, home.hasPrefix("/") else { throw ConnectionError.unexpectedOutput(lines.last ?? "") }
+        return home
     }
 
     /// Parses e.g. "rsync  version 3.2.7  protocol version 31". Returns nil for openrsync and anything else.

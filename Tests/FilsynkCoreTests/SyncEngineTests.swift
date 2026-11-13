@@ -184,8 +184,11 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
     static let pathA = "/filsynk-test/A"
     static let pathB = "/filsynk-test/B"
 
-    static func config(_ folders: [FolderConfig], server: String = "user@server", verifiedServer: String? = nil) -> Config {
-        Config(server: server, folders: folders, verifiedServer: verifiedServer ?? server)
+    static func config(
+        _ folders: [FolderConfig], server: String = "user@server", verifiedServer: String? = nil,
+        verifiedHome: String = "/home/user"
+    ) -> Config {
+        Config(server: server, folders: folders, verifiedServer: verifiedServer ?? server, verifiedHome: verifiedHome)
     }
     static let folderA = FolderConfig(path: pathA, remotePath: "/srv/A")
     static let folderB = FolderConfig(path: pathB, remotePath: "/srv/B")
@@ -252,8 +255,8 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
 
     @Test func unverifiedServerSyncsNothingAndReportsNotConfigured() async {
         // Folders are absolute ("ready") but were resolved on another server, or never verified.
-        for verified in ["old@server", ""] {
-            let h = Self.make(Self.config([Self.folderA, Self.folderB], verifiedServer: verified))
+        for (verified, home) in [("old@server", "/home/user"), ("", "/home/user"), ("user@server", "")] {
+            let h = Self.make(Self.config([Self.folderA, Self.folderB], verifiedServer: verified, verifiedHome: home))
             await h.engine.start()
             await settle()
             #expect(await h.runner.totalCalls == 0)

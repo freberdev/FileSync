@@ -86,8 +86,10 @@ struct ConnectionSetupTests {
     @Test func checkMapsLaunchError() async {
         let f = FakeProcess()
         f.error = LaunchError()
-        let r = await ConnectionSetup(process: f).check(server: server, identityFile: key)
-        guard case .failed = r else { Issue.record("expected .failed, got \(r)"); return }
+        let log = LogSink()
+        let r = await ConnectionSetup(process: f, log: { log.add($0) }).check(server: server, identityFile: key)
+        #expect(r == .failed("Kunde inte starta ssh: \(LaunchError().localizedDescription)"))
+        #expect(log.lines == ["Kunde inte starta ssh: boom"])
     }
 
     @Test func checkUsesBatchModeAndIdentityOnly() async {
@@ -134,7 +136,7 @@ struct ConnectionSetupTests {
     @Test func resolveExpandsTildeToHome() async throws {
         let f = fake(out: "/home/u\n/home/u/Sync\n")
         let p = try await ConnectionSetup(process: f).resolveRemotePath("~/Sync", server: server, identityFile: key)
-        #expect(p == "/home/u/Sync")
+        #expect(p.path == "/home/u/Sync" && p.home == "/home/u")
         let command = f.calls.first?.arguments.last ?? ""
         #expect(command == "cd && pwd -P && mkdir -p \"$HOME/Sync\" && cd \"$HOME/Sync\" && pwd -P")
         #expect(f.calls.first?.executable == "/usr/bin/ssh")
@@ -143,7 +145,7 @@ struct ConnectionSetupTests {
     @Test func resolveAbsolutePathCommand() async throws {
         let f = fake(out: "/home/u\n/srv/x\n")
         let p = try await ConnectionSetup(process: f).resolveRemotePath("/srv/x", server: server, identityFile: key)
-        #expect(p == "/srv/x")
+        #expect(p.path == "/srv/x" && p.home == "/home/u")
         #expect(f.calls.last?.arguments.last == "cd && pwd -P && mkdir -p \"/srv/x\" && cd \"/srv/x\" && pwd -P")
     }
 
@@ -166,9 +168,9 @@ struct ConnectionSetupTests {
     @Test func resolveToleratesBannerAndSiblingWithCommonPrefix() async throws {
         let f = fake(out: "Welcome to host\n\n/home/u\n/home/u2/Sync\n")
         let p = try await ConnectionSetup(process: f).resolveRemotePath("/home/u2/Sync", server: server, identityFile: key)
-        #expect(p == "/home/u2/Sync")
+        #expect(p.path == "/home/u2/Sync")
         let g = fake(out: "motd line\n/home/u\n/home/u/Sync\n")
-        #expect(try await ConnectionSetup(process: g).resolveRemotePath("~/Sync", server: server, identityFile: key) == "/home/u/Sync")
+        #expect(try await ConnectionSetup(process: g).resolveRemotePath("~/Sync", server: server, identityFile: key).path == "/home/u/Sync")
     }
 
     @Test func resolveRejectsOutputWithoutHomeAndPath() async {
@@ -179,7 +181,7 @@ struct ConnectionSetupTests {
     }
 
     @Test func resolveRejectsUnsafePath() async {
-        for bad in ["~/a b", "~/a$(x)"] {
+        for bad in ["~/a b", "~/a$(x)", "~/R&D", "~/a;b", "~/Foto*", "~x/y"] {
             let f = FakeProcess()
             await #expect(throws: ConnectionError.self) {
                 _ = try await ConnectionSetup(process: f).resolveRemotePath(bad, server: server, identityFile: key)
@@ -215,7 +217,7 @@ struct ConnectionSetupTests {
     }
 
     @Test func checkRejectsUnsafeServerWithoutProcess() async {
-        for bad in ["-oProxyCommand=x", "a b", ""] {
+        for bad in ["-oProxyCommand=x", "a b", "", "h;sh<x", "user@host/x"] {
             let f = FakeProcess()
             let r = await ConnectionSetup(process: f).check(server: bad, identityFile: key)
             #expect(r == .failed("Serveradressen är ogiltig"))
@@ -224,7 +226,7 @@ struct ConnectionSetupTests {
     }
 
     @Test func resolveRejectsUnsafeServerWithoutProcess() async {
-        for bad in ["-oProxyCommand=x", "a b", ""] {
+        for bad in ["-oProxyCommand=x", "a b", "", "h;sh<x"] {
             let f = FakeProcess()
             await #expect(throws: ConnectionError.unsafeServer) {
                 _ = try await ConnectionSetup(process: f).resolveRemotePath("~/Sync", server: bad, identityFile: key)

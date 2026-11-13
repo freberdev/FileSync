@@ -25,6 +25,8 @@ public struct Config: Codable, Equatable, Sendable {
     public var rsyncPath: String
     /// The server on which the connection test last succeeded and the folders' remote paths were resolved.
     public var verifiedServer: String
+    /// The home directory (symlinks resolved) that `verifiedServer` reported in that test.
+    public var verifiedHome: String
 
     public static let builtInExcludes: [String] = [
         ".DS_Store", "._*", ".localized", ".Trash*", ".Spotlight-V100", ".fseventsd",
@@ -38,7 +40,8 @@ public struct Config: Codable, Equatable, Sendable {
         exclude: [String] = [],
         folders: [FolderConfig] = [],
         rsyncPath: String = "/usr/bin/rsync",
-        verifiedServer: String = ""
+        verifiedServer: String = "",
+        verifiedHome: String = ""
     ) {
         self.server = server
         self.identityFile = identityFile
@@ -48,13 +51,14 @@ public struct Config: Codable, Equatable, Sendable {
         self.folders = folders
         self.rsyncPath = rsyncPath
         self.verifiedServer = verifiedServer
+        self.verifiedHome = verifiedHome
     }
 
-    /// True when `server` is the one the remote paths were resolved on.
-    public var isVerified: Bool { !server.isEmpty && server == verifiedServer }
+    /// True when `server` is the one the remote paths were resolved on and its home directory is known.
+    public var isVerified: Bool { !server.isEmpty && server == verifiedServer && !verifiedHome.isEmpty }
 
     private enum CodingKeys: String, CodingKey {
-        case server, identityFile, quietSeconds, maxWaitSeconds, exclude, folders, rsyncPath, verifiedServer
+        case server, identityFile, quietSeconds, maxWaitSeconds, exclude, folders, rsyncPath, verifiedServer, verifiedHome
     }
 
     public init(from decoder: Decoder) throws {
@@ -67,6 +71,7 @@ public struct Config: Codable, Equatable, Sendable {
         self.exclude = try c.decodeIfPresent([String].self, forKey: .exclude) ?? []
         self.rsyncPath = try c.decodeIfPresent(String.self, forKey: .rsyncPath) ?? "/usr/bin/rsync"
         self.verifiedServer = try c.decodeIfPresent(String.self, forKey: .verifiedServer) ?? ""
+        self.verifiedHome = try c.decodeIfPresent(String.self, forKey: .verifiedHome) ?? ""
     }
 
     public static func initial(home: String) -> Config {
@@ -85,29 +90,42 @@ public struct Config: Codable, Equatable, Sendable {
 
     public var expandedIdentityFile: String { Config.expandTilde(identityFile) }
 
-    public static func expandTilde(_ path: String) -> String {
-        if path == "~" { return NSHomeDirectory() }
-        if path.hasPrefix("~/") { return NSHomeDirectory() + String(path.dropFirst(1)) }
+    public static func expandTilde(_ path: String, home: String = NSHomeDirectory()) -> String {
+        if path == "~" { return home }
+        if path.hasPrefix("~/") { return home + String(path.dropFirst(1)) }
         return path
     }
 
     public func validate() -> [ConfigIssue] {
+        validate(home: NSHomeDirectory())
+    }
+
+    /// `home` is the local home directory; it locates the app's own files and expands the key path.
+    public func validate(home: String) -> [ConfigIssue] {
         var issues: [ConfigIssue] = []
 
         for folder in folders where !folder.path.hasPrefix("/") {
             issues.append(.localPathNotAbsolute(folder.path))
         }
-        for folder in folders where Config.isUnsafe(folder.remotePath) {
-            issues.append(.unsafeRemotePath(folder.remotePath))
+        let appDirectories = [home + "/Library/Logs/Filsynk", home + "/Library/Application Support/Filsynk"]
+        for folder in folders where folder.path.hasPrefix("/") {
+            let parts = Config.localComponents(folder.path)
+            if appDirectories.contains(where: { Config.isPrefix(parts, of: Config.localComponents($0)) }) {
+                issues.append(.localPathHoldsAppFiles(folder.path))
+            }
         }
-        for folder in folders where folder.remotePath.hasPrefix("/") && Config.remoteComponents(folder.remotePath).isEmpty {
-            issues.append(.remotePathTooBroad(folder.remotePath))
+        for folder in folders {
+            if let issue = remotePathIssue(folder.remotePath) { issues.append(issue) }
         }
-        if Config.isUnsafe(identityFile) {
+        if Config.isUnsafe(identityFile)
+            || Config.expandTilde(identityFile, home: home).unicodeScalars.contains(where: \.properties.isWhitespace) {
             issues.append(.unsafeIdentityFile(identityFile))
         }
-        if !server.isEmpty, Config.isUnsafeServer(server) {
+        if !server.isEmpty, !Config.isSafeServer(server) {
             issues.append(.unsafeServer(server))
+        }
+        for pattern in exclude where !Config.isPlainExclude(pattern) {
+            issues.append(.unsafeExclude(pattern))
         }
 
         let local = folders.map(\.path).filter { $0.hasPrefix("/") }
@@ -121,17 +139,81 @@ public struct Config: Codable, Equatable, Sendable {
         return issues
     }
 
-    private static let unsafeCharacters: Set<Character> = [" ", "\"", "'", "$", "`", "\\", "\n", "\r", "\r\n"]
+    /// The first problem with a remote path, judged without contacting the server.
+    private func remotePathIssue(_ path: String) -> ConfigIssue? {
+        guard Config.isSafeRemotePath(path) else { return .unsafeRemotePath(path) }
+        let raw = path.split(separator: "/").map(String.init)
+        if raw.contains(".") || raw.contains("..") { return .remotePathNotAllowed(path) }
 
-    /// True for a server string that ssh or rsync could read as an option or that holds
-    /// whitespace, control or shell-significant characters. Empty is not judged here.
-    static func isUnsafeServer(_ s: String) -> Bool {
-        s.hasPrefix("-") || isUnsafe(s)
-            || s.unicodeScalars.contains { $0.properties.isWhitespace || $0.properties.generalCategory == .control }
+        var absolute = path
+        if !verifiedHome.isEmpty, path == "~" || path.hasPrefix("~/") {
+            absolute = verifiedHome + path.dropFirst()
+        }
+        guard absolute.hasPrefix("/") else { return nil }
+        let parts = Config.remoteComponents(absolute)
+        if parts.isEmpty { return .remotePathTooBroad(path) }
+        guard !verifiedHome.isEmpty else { return nil }
+        let homeParts = Config.remoteComponents(verifiedHome)
+        // The home directory or above it: a --delete sync there would move authorized_keys away.
+        if Config.isPrefix(parts, of: homeParts) { return .remotePathTooBroad(path) }
+        if Config.isPrefix(homeParts + [".ssh"], of: parts) { return .remotePathNotAllowed(path) }
+        return nil
+    }
+
+    private static let unsafeCharacters: Set<Character> = [" ", "\"", "'", "$", "`", "\\", "\n", "\r", "\r\n"]
+    private static let remotePathPunctuation: Set<Unicode.Scalar> = [".", "_", "-", "/", "+", "@", ",", "=", "%"]
+    private static let serverPunctuation: Set<Unicode.Scalar> = [".", "_", "-", "@", ":", "[", "]", "%"]
+
+    /// A remote path is put on the server's command line, so it may hold only letters, digits and
+    /// `. _ - / + @ , = %`, plus a leading `~` that is the whole path or followed by `/`.
+    public static func isSafeRemotePath(_ path: String) -> Bool {
+        var rest = Substring(path)
+        if rest == "~" { return true }
+        if rest.hasPrefix("~/") { rest = rest.dropFirst() }
+        return rest.allSatisfy { character in
+            let scalars = character.unicodeScalars
+            guard let first = scalars.first else { return false }
+            if scalars.count == 1, remotePathPunctuation.contains(first) { return true }
+            return isLetterOrDigit(first) && scalars.dropFirst().allSatisfy(isMark)
+        }
+    }
+
+    /// ASCII letters and digits and `. _ - @ : [ ] %`, not starting with `-`. Empty is not judged here.
+    public static func isSafeServer(_ server: String) -> Bool {
+        !server.hasPrefix("-") && server.unicodeScalars.allSatisfy { scalar in
+            scalar.isASCII && (scalar.properties.isAlphabetic || ("0"..."9").contains(scalar) || serverPunctuation.contains(scalar))
+        }
+    }
+
+    /// An exclude entry must be a plain pattern: rsync reads `!`, `+ `, `- `, `: ` and `. ` at the
+    /// start of a line as rules, and a line break would start a new rule.
+    static func isPlainExclude(_ pattern: String) -> Bool {
+        if pattern.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return false }
+        if pattern.contains(where: { $0.unicodeScalars.contains { $0 == "\n" || $0 == "\r" } }) { return false }
+        if pattern.hasPrefix("!") { return false }
+        return !["+ ", "- ", ": ", ". "].contains(where: pattern.hasPrefix)
     }
 
     static func isUnsafe(_ s: String) -> Bool {
         s.contains { unsafeCharacters.contains($0) }
+    }
+
+    private static func isLetterOrDigit(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.properties.generalCategory {
+        case .uppercaseLetter, .lowercaseLetter, .titlecaseLetter, .modifierLetter, .otherLetter, .decimalNumber: return true
+        default: return false
+        }
+    }
+
+    private static func isMark(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.properties.generalCategory {
+        case .nonspacingMark, .spacingMark, .enclosingMark: return true
+        default: return false
+        }
+    }
+
+    private static func isPrefix(_ prefix: [String], of path: [String]) -> Bool {
+        prefix.count <= path.count && Array(path.prefix(prefix.count)) == prefix
     }
 
     private static func localComponents(_ path: String) -> [String] {
@@ -180,6 +262,9 @@ public enum ConfigIssue: Equatable, Sendable {
     case unsafeIdentityFile(String)
     case unsafeServer(String)
     case remotePathTooBroad(String)
+    case remotePathNotAllowed(String)
+    case unsafeExclude(String)
+    case localPathHoldsAppFiles(String)
 
     public var message: String {
         switch self {
@@ -190,11 +275,17 @@ public enum ConfigIssue: Equatable, Sendable {
         case .nestedRemotePaths(let a, let b):
             return "Mapparna på servern \"\(a)\" och \"\(b)\" ligger inuti varandra."
         case .unsafeRemotePath(let p):
-            return "Sökvägen på servern \"\(p)\" innehåller otillåtna tecken (mellanslag, citattecken, $, ` eller \\)."
+            return "Sökvägen på servern \"\(p)\" innehåller otillåtna tecken. Använd bokstäver, siffror och . _ - / + @ , = %."
         case .unsafeServer(let s):
             return "Serveradressen är ogiltig: \(s)"
         case .remotePathTooBroad(let p):
             return "Sökvägen på servern \"\(p)\" är för bred. Välj en egen mapp."
+        case .remotePathNotAllowed(let p):
+            return "Sökvägen på servern \"\(p)\" går inte att använda. Välj en egen mapp utan . och .. och utanför ~/.ssh."
+        case .unsafeExclude(let e):
+            return "Undantaget \"\(e)\" går inte att använda. Det får inte vara tomt eller börja med !, + , - , : eller . följt av mellanslag."
+        case .localPathHoldsAppFiles(let p):
+            return "Mappen \"\(p)\" innehåller Filsynks egna filer (logg och inställningar) och skulle synkas om och om igen. Välj en undermapp."
         case .unsafeIdentityFile(let p):
             return "Nyckelfilen \"\(p)\" innehåller otillåtna tecken (mellanslag, citattecken, $, ` eller \\)."
         }

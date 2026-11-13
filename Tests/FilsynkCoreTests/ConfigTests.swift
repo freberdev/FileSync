@@ -90,7 +90,7 @@ extension ConfigTests {
     }
 
     @Test func verifiedServerRoundTrips() throws {
-        let c = Config(server: "u@h", verifiedServer: "u@h")
+        let c = Config(server: "u@h", verifiedServer: "u@h", verifiedHome: "/home/u")
         let back = try JSONDecoder().decode(Config.self, from: JSONEncoder().encode(c))
         #expect(back == c && back.verifiedServer == "u@h" && back.isVerified)
     }
@@ -98,12 +98,123 @@ extension ConfigTests {
     @Test func isVerifiedNeedsMatchingNonEmptyServer() {
         #expect(!Config(server: "", verifiedServer: "").isVerified)
         #expect(!Config(server: "a@h", verifiedServer: "b@h").isVerified)
-        #expect(Config(server: "a@h", verifiedServer: "a@h").isVerified)
+        #expect(Config(server: "a@h", verifiedServer: "a@h", verifiedHome: "/home/a").isVerified)
     }
 
     @Test func validateRejectsRootAsRemotePath() {
         let c = Config(server: "u@h", folders: [.init(path: "/Users/x/A", remotePath: "/")])
         #expect(c.validate().contains(.remotePathTooBroad("/")))
         #expect(ConfigIssue.remotePathTooBroad("/").message == "Sökvägen på servern \"/\" är för bred. Välj en egen mapp.")
+    }
+}
+
+extension ConfigTests {
+    @Test func remotePathAllowsOnlyLettersDigitsAndPlainPunctuation() {
+        for bad in ["~/R&D", "~/a;b", "~/Foto*", "~/a|b", "~/a(b)", "~/a<b", "~/a#b", "~x/y", "~/a?b", "/srv/a~b", "~~/a"] {
+            #expect(!Config.isSafeRemotePath(bad), "\(bad)")
+            let c = Config(server: "u@h", folders: [.init(path: "/Users/x/A", remotePath: bad)])
+            #expect(c.validate(home: "/Users/x").contains(.unsafeRemotePath(bad)), "\(bad)")
+        }
+        for good in ["~/Säkerhetskopia-2026/Mac_1", "/srv/backup/mac+1", "~", "~/Sync", "/srv/a.b/c@d,e=f%g",
+                     "~/Sa\u{0308}kerhet"] {
+            #expect(Config.isSafeRemotePath(good), "\(good)")
+            let c = Config(server: "u@h", folders: [.init(path: "/Users/x/A", remotePath: good)])
+            #expect(!c.validate(home: "/Users/x").contains(.unsafeRemotePath(good)), "\(good)")
+        }
+    }
+
+    @Test func serverAllowsOnlyPlainAddressCharacters() {
+        for good in ["user@192.168.1.10", "host.example.com", "my-server", "user@[fe80::1%en0]", "u_1@h"] {
+            #expect(Config.isSafeServer(good), "\(good)")
+            #expect(!Config(server: good).validate(home: "/Users/x").contains(.unsafeServer(good)), "\(good)")
+        }
+        for bad in ["h;sh<x", "a b", "-oProxyCommand=x", "user@host/x", "u@h$x", "u@h\tx", "användare@h", "u@h&"] {
+            #expect(!Config.isSafeServer(bad), "\(bad)")
+            #expect(Config(server: bad).validate(home: "/Users/x").contains(.unsafeServer(bad)), "\(bad)")
+        }
+        #expect(Config(server: "").validate(home: "/Users/x").isEmpty)
+    }
+
+    @Test func identityFileMustNotExpandToPathWithWhitespace() {
+        let c = Config(identityFile: "~/.ssh/filsynk_ed25519")
+        #expect(c.validate(home: "/Users/Mitt Namn").contains(.unsafeIdentityFile("~/.ssh/filsynk_ed25519")))
+        #expect(c.validate(home: "/Users/x").isEmpty)
+        #expect(Config(identityFile: "/k/a\tb").validate(home: "/Users/x").contains(.unsafeIdentityFile("/k/a\tb")))
+    }
+}
+
+extension ConfigTests {
+    private func verified(_ remotePaths: [String], home: String = "/home/u") -> Config {
+        Config(server: "u@h", folders: remotePaths.enumerated().map { .init(path: "/Users/x/F\($0.offset)", remotePath: $0.element) },
+               verifiedServer: "u@h", verifiedHome: home)
+    }
+
+    @Test func verifiedHomeDefaultsToEmptyAndRoundTrips() throws {
+        let old = try JSONDecoder().decode(Config.self, from: Data(#"{"server":"u@h","folders":[],"verifiedServer":"u@h"}"#.utf8))
+        #expect(old.verifiedHome == "")
+        #expect(!old.isVerified)
+        let c = Config(server: "u@h", verifiedServer: "u@h", verifiedHome: "/home/u")
+        let back = try JSONDecoder().decode(Config.self, from: JSONEncoder().encode(c))
+        #expect(back == c && back.isVerified)
+    }
+
+    @Test func isVerifiedNeedsKnownHome() {
+        #expect(!Config(server: "a@h", verifiedServer: "a@h").isVerified)
+        #expect(Config(server: "a@h", verifiedServer: "a@h", verifiedHome: "/home/a").isVerified)
+        #expect(!Config(server: "b@h", verifiedServer: "a@h", verifiedHome: "/home/a").isVerified)
+    }
+
+    @Test func remotePathWithDotComponentIsRejected() {
+        for bad in ["/home/u/Sync/..", "/home/u/./Sync", "~/..", "/srv/x/../y", "~/."] {
+            #expect(verified([bad]).validate(home: "/Users/x").contains(.remotePathNotAllowed(bad)), "\(bad)")
+            #expect(verified([bad], home: "").validate(home: "/Users/x").contains(.remotePathNotAllowed(bad)), "\(bad)")
+        }
+    }
+
+    @Test func remotePathAtOrAboveVerifiedHomeIsTooBroad() {
+        for bad in ["/home/u", "/home/u/", "/home"] {
+            #expect(verified([bad]).validate(home: "/Users/x").contains(.remotePathTooBroad(bad)), "\(bad)")
+        }
+        // Without a known home only the root can be judged.
+        #expect(!verified(["/home/u"], home: "").validate(home: "/Users/x").contains(.remotePathTooBroad("/home/u")))
+    }
+
+    @Test func remotePathInSshDirectoryIsRejected() {
+        for bad in ["/home/u/.ssh", "/home/u/.ssh/keys", "~/.ssh"] {
+            #expect(verified([bad]).validate(home: "/Users/x").contains(.remotePathNotAllowed(bad)), "\(bad)")
+        }
+        #expect(ConfigIssue.remotePathNotAllowed("/home/u/.ssh").message.contains(".ssh"))
+    }
+
+    @Test func remotePathBelowOrOutsideHomeIsAccepted() {
+        #expect(verified(["/home/u/Sync"]).validate(home: "/Users/x") == [])
+        #expect(verified(["/srv/backup/x"]).validate(home: "/Users/x") == [])
+        #expect(verified(["/home/u/.sshfiler"]).validate(home: "/Users/x") == [])
+        #expect(verified(["/home/u2/Sync"]).validate(home: "/Users/x") == [])
+    }
+}
+
+extension ConfigTests {
+    @Test func excludeEntriesThatAreRsyncRulesAreRejected() {
+        for bad in ["", "  ", "!", "!foo", "+ foo", "- foo", ": .gitignore", ". regler", "a\nb", "a\rb"] {
+            let c = Config(exclude: [bad])
+            #expect(c.validate(home: "/Users/x").contains(.unsafeExclude(bad)), "\(bad.debugDescription)")
+        }
+        for good in ["node_modules", "*.tmp", ".git", "-foo", "+foo", ".hidden", "a!b", ":x"] {
+            #expect(Config(exclude: [good]).validate(home: "/Users/x") == [], "\(good)")
+        }
+        #expect(ConfigIssue.unsafeExclude("!").message.hasPrefix("Undantaget"))
+    }
+
+    @Test func localFolderHoldingTheAppsOwnFilesIsRejected() {
+        for bad in ["/Users/x", "/Users/x/Library", "/Users/x/Library/Logs", "/Users/x/Library/Logs/Filsynk",
+                    "/Users/x/Library/Application Support", "/Users/x/Library/Application Support/Filsynk", "/Users", "/"] {
+            let c = Config(folders: [.init(path: bad, remotePath: "/srv/x")])
+            #expect(c.validate(home: "/Users/x").contains(.localPathHoldsAppFiles(bad)), "\(bad)")
+        }
+        for good in ["/Users/x/Sync", "/Users/x/Library/Mail", "/Users/y", "/Users/x/Library/Logs/Annat"] {
+            let c = Config(folders: [.init(path: good, remotePath: "/srv/x")])
+            #expect(c.validate(home: "/Users/x") == [], "\(good)")
+        }
     }
 }

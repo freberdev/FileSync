@@ -9,19 +9,22 @@ public enum AddFolderResult: Equatable, Sendable {
 /// The logic behind the settings window's buttons, on top of `ConnectionSetup`.
 public struct SetupFlow: Sendable {
     private let setup: ConnectionSetup
+    private let log: (@Sendable (String) -> Void)?
 
-    public init(process: any ProcessRunning) {
-        self.setup = ConnectionSetup(process: process)
+    public init(process: any ProcessRunning, log: (@Sendable (String) -> Void)? = nil) {
+        self.setup = ConnectionSetup(process: process, log: log)
+        self.log = log
     }
 
     /// ensureKey, check, and (only when the check is `.ok`) resolve every folder that is not ready.
     /// Any other result returns `config` unchanged. If a resolve fails, the result is `.failed`
     /// and that folder stays unresolved; folders resolved before it stay resolved.
+    /// `verifiedServer` and `verifiedHome` are set together, and only when everything succeeded.
     public func connect(_ config: Config) async -> (result: ConnectionResult, config: Config) {
         do {
             _ = try await setup.ensureKey(identityFile: config.identityFile)
         } catch {
-            return (.failed(Self.message(for: error)), config)
+            return (.failed(message(for: error)), config)
         }
         let result = await setup.check(server: config.server, identityFile: config.identityFile)
         guard case .ok = result else { return (result, config) }
@@ -29,15 +32,33 @@ public struct SetupFlow: Sendable {
         // Paths resolved on another server mean nothing here: resolve them all again.
         let resolveAll = config.verifiedServer != config.server
         var updated = config
+        var home: String?
         for index in updated.folders.indices where resolveAll || !updated.folders[index].isReady {
             do {
-                updated.folders[index].remotePath = try await setup.resolveRemotePath(
+                let resolved = try await setup.resolveRemotePath(
                     updated.folders[index].remotePath, server: updated.server, identityFile: updated.identityFile)
+                updated.folders[index].remotePath = resolved.path
+                home = resolved.home
             } catch {
-                return (.failed(Self.message(for: error)), updated)
+                return (.failed(message(for: error)), updated)
+            }
+        }
+        if home == nil {
+            do {
+                home = try await setup.remoteHome(server: updated.server, identityFile: updated.identityFile)
+            } catch ConnectionError.remoteCommandFailed(let outcome) {
+                switch outcome {
+                case .unreachable: return (.unreachable, updated)
+                case .authDenied: return (.authDenied, updated)
+                case .failed(let text): return (.failed(text), updated)
+                case .success: return (.failed("Oväntat svar från servern"), updated)
+                }
+            } catch {
+                return (.failed(message(for: error)), updated)
             }
         }
         updated.verifiedServer = updated.server
+        updated.verifiedHome = home ?? ""
         return (result, updated)
     }
 
@@ -53,9 +74,9 @@ public struct SetupFlow: Sendable {
 
         let resolved: String
         do {
-            resolved = try await setup.resolveRemotePath(entered, server: config.server, identityFile: config.identityFile)
+            resolved = try await setup.resolveRemotePath(entered, server: config.server, identityFile: config.identityFile).path
         } catch {
-            return .rejected(Self.message(for: error))
+            return .rejected(message(for: error))
         }
 
         // Nesting between remote paths can only be judged once the path is absolute.
@@ -72,8 +93,12 @@ public struct SetupFlow: Sendable {
         return updated
     }
 
-    static func message(for error: any Error) -> String {
-        guard let error = error as? ConnectionError else { return "\(error)" }
+    /// A short text for the user; anything unexpected is written to the log in full.
+    private func message(for error: any Error) -> String {
+        guard let error = error as? ConnectionError else {
+            log?("Kunde inte köra kommandot: \(error)")
+            return "Kunde inte köra kommandot: \(error.localizedDescription)"
+        }
         switch error {
         case .unsafePath(let path):
             return "Sökvägen på servern \"\(path)\" innehåller otillåtna tecken."
@@ -81,7 +106,8 @@ public struct SetupFlow: Sendable {
             return "Serveradressen är ogiltig"
         case .remoteCommandFailed(let outcome):
             return "Kunde inte skapa mappen på servern: \(outcome.message ?? "okänt fel")"
-        case .unexpectedOutput:
+        case .unexpectedOutput(let line):
+            log?("Oväntat svar från servern: \(line)")
             return "Oväntat svar från servern"
         case .pathTooBroad:
             return "Välj en egen mapp på servern, inte hemkatalogen eller en mapp ovanför den."
