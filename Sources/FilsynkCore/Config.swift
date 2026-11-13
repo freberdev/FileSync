@@ -64,10 +64,12 @@ public struct Config: Codable, Equatable, Sendable {
         Config(folders: [FolderConfig(path: home + "/Sync", remotePath: "~/Sync")])
     }
 
-    public var expandedIdentityFile: String {
-        if identityFile == "~" { return NSHomeDirectory() }
-        if identityFile.hasPrefix("~/") { return NSHomeDirectory() + String(identityFile.dropFirst(1)) }
-        return identityFile
+    public var expandedIdentityFile: String { Config.expandTilde(identityFile) }
+
+    public static func expandTilde(_ path: String) -> String {
+        if path == "~" { return NSHomeDirectory() }
+        if path.hasPrefix("~/") { return NSHomeDirectory() + String(path.dropFirst(1)) }
+        return path
     }
 
     public func validate() -> [ConfigIssue] {
