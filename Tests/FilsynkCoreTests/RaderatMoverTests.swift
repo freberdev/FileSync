@@ -39,6 +39,35 @@ import Foundation
         ((try? fm.contentsOfDirectory(atPath: path)) ?? []).sorted()
     }
 
+    /// Skapar filen med exakt de bytes namnet har, utan att Foundation väljer Unicode-form.
+    private func writeRaw(_ path: String, _ text: String) throws {
+        var folder = ""
+        for part in (path as NSString).deletingLastPathComponent.split(separator: "/", omittingEmptySubsequences: true) {
+            folder += "/" + part
+            if mkdir(folder, 0o755) != 0, errno != EEXIST { throw CocoaError(.fileWriteUnknown) }
+        }
+        let fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
+        guard fd >= 0 else { throw CocoaError(.fileWriteUnknown) }
+        defer { close(fd) }
+        let bytes = Array(text.utf8)
+        guard Darwin.write(fd, bytes, bytes.count) == bytes.count else { throw CocoaError(.fileWriteUnknown) }
+    }
+
+    /// Namnen i en mapp som råa bytes, som readdir ger dem.
+    private func rawNames(_ path: String) -> [[UInt8]] {
+        guard let dir = opendir(path) else { return [] }
+        defer { closedir(dir) }
+        var result: [[UInt8]] = []
+        while let e = readdir(dir) {
+            let name = withUnsafeBytes(of: e.pointee.d_name) { raw in
+                Array(raw.prefix(Int(e.pointee.d_namlen)))
+            }
+            if name == [0x2E] || name == [0x2E, 0x2E] { continue }
+            result.append(name)
+        }
+        return result
+    }
+
     @Test func movesFileMissingInSource() throws {
         try withArea { a in
             try write(a.dst("a.txt"), "innehåll")
@@ -63,11 +92,16 @@ import Foundation
         try withArea { a in
             let nfc = "Åäö.txt".precomposedStringWithCanonicalMapping
             let nfd = "Åäö.txt".decomposedStringWithCanonicalMapping
-            try write(a.src(nfc), "källa"); try write(a.dst(nfc), "mål")
+            try writeRaw(a.src(nfc), "källa")
+            try writeRaw(a.dst(nfd), "mål")
+            // Källan har NFC-byten på disken, listan NFD, och de är olika.
+            #expect(rawNames(a.source) == [Array(nfc.utf8)])
+            #expect(Array(nfc.utf8) != Array(nfd.utf8))
+            #expect(rawNames(a.source) != [Array(nfd.utf8)])
             let r = try RaderatMover.move([nfd], source: a.source, destination: a.destination, timestamp: ts)
             #expect(r.moved == []); #expect(r.kept == [nfd])
-            #expect(read(a.dst(nfc)) == "mål")
-            #expect(names(a.destination) == [nfc])
+            #expect(read(a.dst(nfd)) == "mål")
+            #expect(rawNames(a.destination) == [Array(nfd.utf8)])
             #expect(!exists(a.destination + "/Raderat"))
         }
     }
@@ -76,13 +110,59 @@ import Foundation
         try withArea { a in
             let nfc = "Varumärke".precomposedStringWithCanonicalMapping
             let nfd = "Varumärke".decomposedStringWithCanonicalMapping
-            try write(a.src(nfc + "/plain.txt"), "k"); try write(a.dst(nfc + "/plain.txt"), "m")
+            try writeRaw(a.src(nfc + "/plain.txt"), "k")
+            try writeRaw(a.dst(nfd + "/plain.txt"), "m")
+            #expect(rawNames(a.source) == [Array(nfc.utf8)])
+            #expect(Array(nfc.utf8) != Array(nfd.utf8))
+            #expect(rawNames(a.source) != [Array(nfd.utf8)])
             let r = try RaderatMover.move([nfd + "/plain.txt", nfd + "/"], source: a.source,
                                           destination: a.destination, timestamp: ts)
             #expect(r.moved == []); #expect(r.removedDirectories == [])
             #expect(Set(r.kept) == [nfd + "/plain.txt", nfd + "/"])
-            #expect(read(a.dst(nfc + "/plain.txt")) == "m")
+            #expect(read(a.dst(nfd + "/plain.txt")) == "m")
+            #expect(rawNames(a.destination) == [Array(nfd.utf8)])
             #expect(!exists(a.destination + "/Raderat"))
+        }
+    }
+
+    @Test func throwsWhenSourceIsADanglingSymbolicLink() throws {
+        try withArea { a in
+            try write(a.dst("a.txt"), "a")
+            let link = a.root.path + "/kalla-lank"
+            try fm.createSymbolicLink(atPath: link, withDestinationPath: a.root.path + "/finns-inte")
+            #expect(throws: (any Error).self) {
+                try RaderatMover.move(["a.txt"], source: link, destination: a.destination, timestamp: ts)
+            }
+            #expect(read(a.dst("a.txt")) == "a")
+            #expect(!exists(a.destination + "/Raderat"))
+        }
+    }
+
+    @Test func throwsWhenSourceIsASymbolicLinkToAFile() throws {
+        try withArea { a in
+            try write(a.dst("b.txt"), "b"); try write(a.root.path + "/fil.txt", "x")
+            let link = a.root.path + "/kalla-lank"
+            try fm.createSymbolicLink(atPath: link, withDestinationPath: a.root.path + "/fil.txt")
+            #expect(throws: (any Error).self) {
+                try RaderatMover.move(["b.txt"], source: link, destination: a.destination, timestamp: ts)
+            }
+            #expect(read(a.dst("b.txt")) == "b")
+            #expect(!exists(a.destination + "/Raderat"))
+        }
+    }
+
+    @Test func worksWhenSourceIsASymbolicLinkToAFolder() throws {
+        try withArea { a in
+            try write(a.dst("finns.txt"), "m1"); try write(a.dst("borta.txt"), "m2")
+            try write(a.root.path + "/riktig/finns.txt", "k")
+            let link = a.root.path + "/kalla-lank"
+            try fm.createSymbolicLink(atPath: link, withDestinationPath: a.root.path + "/riktig")
+            let r = try RaderatMover.move(["finns.txt", "borta.txt"], source: link, destination: a.destination, timestamp: ts)
+            #expect(r.moved == ["borta.txt"]); #expect(r.kept == ["finns.txt"])
+            #expect(read(a.dst("finns.txt")) == "m1")
+            #expect(read(a.raderat(ts, "borta.txt")) == "m2")
+            #expect(!exists(a.dst("borta.txt")))
+            #expect(read(a.root.path + "/riktig/finns.txt") == "k")
         }
     }
 

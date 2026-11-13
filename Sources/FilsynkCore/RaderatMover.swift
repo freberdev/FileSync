@@ -33,7 +33,11 @@ public enum RaderatMover {
                             timestamp: String) throws -> MoveReport {
         guard isSingleComponent(timestamp) else { throw RaderatMoverError.invalidTimestamp(timestamp) }
         let src = trimmedRoot(source), dst = trimmedRoot(destination)
-        guard case .entry(let s) = lookup(src), s.isDirectory || s.isLink else { throw RaderatMoverError.missingFolder(source) }
+        // Roten avgörs genom länkar: en länk som pekar ingenstans räknas som att källan saknas.
+        var rootStat = stat()
+        guard stat(src, &rootStat) == 0, rootStat.st_mode & S_IFMT == S_IFDIR else {
+            throw RaderatMoverError.missingFolder(source)
+        }
         guard case .entry(let d) = lookup(dst), d.isDirectory else { throw RaderatMoverError.missingFolder(destination) }
         let dstReal = realPath(dst) ?? dst
 
