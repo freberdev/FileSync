@@ -16,7 +16,7 @@ public struct SetupFlow: Sendable {
         self.log = log
     }
 
-    /// ensureKey, check, and (only when the check is `.ok`) resolve every folder that is not ready.
+    /// ensureKey, check, and (only when the check is `.ok`) resolve every server destination that is not ready.
     /// Any other result returns `config` unchanged. If a resolve fails, the result is `.failed`
     /// and that folder stays unresolved; folders resolved before it stay resolved.
     /// `verifiedServer`, `verifiedHome` and `verifiedLogicalHome` are set together, and only when everything succeeded.
@@ -33,7 +33,10 @@ public struct SetupFlow: Sendable {
         let resolveAll = config.verifiedServer != config.server
         var updated = config
         var homes: (home: String, logicalHome: String)?
-        for index in updated.folders.indices where resolveAll || !updated.folders[index].isReady {
+        // Folders with only disk destinations have nothing on the server to resolve.
+        for index in updated.folders.indices
+        where updated.folders[index].destinations.contains(where: \.isServer)
+            && (resolveAll || !updated.folders[index].isReady) {
             do {
                 let resolved = try await setup.resolveRemotePath(
                     updated.folders[index].remotePath, server: updated.server, identityFile: updated.identityFile)

@@ -195,6 +195,46 @@ struct SetupFlowTests {
         #expect(out.config.verifiedHome == "" && out.config.verifiedLogicalHome == "")
     }
 
+    private static let diskOnly = FolderConfig(path: "/Users/x/Disk", destinations: [
+        .disk(DiskLocation(volumeUUID: "U1", volumeName: "Testdisk", path: "Backup"))])
+
+    @Test func connectToNewServerLeavesDiskOnlyFoldersAlone() async {
+        let p = ScriptedProcess()
+        let c = config(server: "new@h", verified: "old@h", folders: [
+            .init(path: "/Users/x/Sync", remotePath: "~/Sync"), Self.diskOnly,
+        ])
+        let out = await SetupFlow(process: p).connect(c)
+        #expect(out.result == .ok(rsyncVersion: "3.2.7"))
+        #expect(!p.remoteCommands.contains { $0.contains("\"\"") })
+        #expect(p.remoteCommands.filter { $0.contains("mkdir") }.count == 1)
+        #expect(out.config.folders[0].remotePath == "/home/u/Sync")
+        #expect(out.config.folders[1] == Self.diskOnly)
+        #expect(out.config.isVerified)
+    }
+
+    @Test func connectWhenVerifiedLeavesDiskOnlyFoldersAlone() async {
+        let p = ScriptedProcess()
+        let c = config(folders: [.init(path: "/Users/x/Sync", remotePath: "~/Sync"), Self.diskOnly])
+        let out = await SetupFlow(process: p).connect(c)
+        #expect(out.result == .ok(rsyncVersion: "3.2.7"))
+        #expect(!p.remoteCommands.contains { $0.contains("\"\"") })
+        #expect(p.remoteCommands.filter { $0.contains("mkdir") }.count == 1)
+        #expect(out.config.folders[0].remotePath == "/home/u/Sync")
+        #expect(out.config.folders[1] == Self.diskOnly)
+        #expect(out.config.isVerified)
+    }
+
+    @Test func connectWithOnlyDiskFoldersCreatesNothingOnServer() async {
+        for verified in ["", "u@h", "old@h"] {
+            let p = ScriptedProcess()
+            let out = await SetupFlow(process: p).connect(config(verified: verified, folders: [Self.diskOnly]))
+            #expect(out.result == .ok(rsyncVersion: "3.2.7"))
+            #expect(!p.remoteCommands.contains { $0.contains("mkdir") })
+            #expect(out.config.folders == [Self.diskOnly])
+            #expect(out.config.isVerified)
+        }
+    }
+
     @Test func launchFailureShowsShortTextAndLogsDetail() async {
         let f = FakeProcess()
         f.error = LaunchError()
