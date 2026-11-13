@@ -35,9 +35,13 @@ struct PendingFolder: Equatable {
     /// Validation or save error from the latest change; shown in red at the bottom of the settings window.
     private(set) var issue: String?
     /// A folder waiting for the user to confirm its warnings. Settings edits are refused meanwhile.
-    private(set) var pendingFolder: PendingFolder?
+    private(set) var pendingFolder: PendingFolder? {
+        didSet { recordSourceVolumesIfUnlocked() }
+    }
     /// True while a connection test or folder addition is under way; settings edits are refused meanwhile.
-    private(set) var isBusy = false
+    private(set) var isBusy = false {
+        didSet { recordSourceVolumesIfUnlocked() }
+    }
     /// Set when the config file exists but cannot be read. Nothing may be saved then, so the file is never overwritten.
     private(set) var configError: String?
 
@@ -54,6 +58,9 @@ struct PendingFolder: Equatable {
     /// The one volume monitor of the app; the disk runner and the engine share it.
     @ObservationIgnored private let volumes = SystemVolumeMonitor()
     @ObservationIgnored private var mountObserver: NSObjectProtocol?
+    /// Set when the source volumes could not be recorded because the settings were locked, and after
+    /// a folder has been added; they are recorded as soon as the settings are unlocked.
+    @ObservationIgnored private var sourceVolumesPending = false
 
     init(store: ConfigStore = ConfigStore(url: ConfigStore.defaultURL), log: FileLog = FileLog(url: FileLog.defaultURL)) {
         self.store = store
@@ -84,11 +91,11 @@ struct PendingFolder: Equatable {
             publish()
             return
         }
-        recordSourceVolumes()
+        Task { await recordSourceVolumes() }
         mountObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didMountNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.recordSourceVolumes() }
+            Task { @MainActor in await self?.recordSourceVolumes() }
         }
         makeEngine()
         if firstStart {
@@ -252,6 +259,8 @@ struct PendingFolder: Equatable {
             return false
         case .added(let updated):
             issue = apply(updated)
+            // A folder added with a server destination has no source volume yet.
+            if issue == nil { sourceVolumesPending = true }
             return issue == nil
         }
     }
@@ -288,12 +297,26 @@ struct PendingFolder: Equatable {
     }
 
     /// Remembers the volume of every folder that lies on a disk other than the system disk, so
-    /// that the folder waits for that disk instead of syncing an empty mount point.
-    private func recordSourceVolumes() {
+    /// that the folder waits for that disk instead of syncing an empty mount point. The volumes are
+    /// listed off the main actor, since a stalled network mount can hang the listing. While the
+    /// settings are locked nothing is saved, so that an addition built on an older config cannot
+    /// overwrite the result; it is done again once they are unlocked.
+    private func recordSourceVolumes() async {
         guard canSave else { return }
-        let updated = config.recordingSourceVolumes(volumes.mountedVolumes())
+        guard !isLocked else { sourceVolumesPending = true; return }
+        let volumes = self.volumes
+        let mounted = await Task.detached { volumes.mountedVolumes() }.value
+        guard canSave else { return }
+        guard !isLocked else { sourceVolumesPending = true; return }
+        let updated = config.recordingSourceVolumes(mounted)
         guard updated != config else { return }
         if let message = apply(updated) { log.write("Kunde inte spara mappens volym: \(message)") }
+    }
+
+    private func recordSourceVolumesIfUnlocked() {
+        guard sourceVolumesPending, !isLocked else { return }
+        sourceVolumesPending = false
+        Task { await recordSourceVolumes() }
     }
 
     // MARK: Engine
