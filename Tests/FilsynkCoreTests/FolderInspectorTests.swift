@@ -67,4 +67,16 @@ struct FolderInspectorTests {
         #expect(r.warnings[1] == "3 filer (\(size)) finns bara i iCloud och laddas ner vid första synken.")
         #expect(r.warnings[2].hasPrefix("Mappen \"Raderat\""))
     }
+
+    @Test func folderWithoutWarningsIsAddedDirectly() {
+        let r = FolderReport(fileCount: 10, cloudOnlyCount: 0, cloudOnlyBytes: 0, hasReservedRaderat: false)
+        #expect(FolderAddStep.after(r, confirmed: false) == .add)
+        #expect(FolderAddStep.after(r, confirmed: true) == .add)
+    }
+
+    @Test func folderWithWarningsNeedsConfirmation() {
+        let r = FolderReport(fileCount: 10, cloudOnlyCount: 2, cloudOnlyBytes: 1_000, hasReservedRaderat: false)
+        #expect(FolderAddStep.after(r, confirmed: false) == .confirm(r.warnings))
+        #expect(FolderAddStep.after(r, confirmed: true) == .add)
+    }
 }

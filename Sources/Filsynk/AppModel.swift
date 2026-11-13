@@ -6,10 +6,18 @@ enum ConnectionState: Equatable {
     case unknown, testing, ok(String), problem(String)
 }
 
+/// A folder whose inspection found warnings; it is added only if the user confirms.
+struct PendingFolder: Equatable {
+    let localPath: String
+    let remoteEntered: String
+    let report: FolderReport
+    var warnings: [String] { report.warnings }
+}
+
 @MainActor @Observable final class AppModel {
     private(set) var status: EngineStatus = .empty
     var config: Config
-    /// Set on a fresh start without a config file; the app delegate side opens the settings window.
+    /// Set on a fresh start without a config file; `FilsynkApp` then opens the settings window.
     private(set) var isFirstStart = false
 
     private(set) var hasStarted = false
@@ -18,26 +26,29 @@ enum ConnectionState: Equatable {
     private(set) var needsKeyInstall = false
     /// Validation or save error from the latest change; shown in red at the bottom of the settings window.
     private(set) var issue: String?
-    /// Warnings from the latest added folder.
-    private(set) var folderWarnings: [String] = []
-    /// True while a connection test or folder addition talks to the server; settings edits are refused meanwhile.
+    /// A folder waiting for the user to confirm its warnings. Settings edits are refused meanwhile.
+    private(set) var pendingFolder: PendingFolder?
+    /// True while a connection test or folder addition is under way; settings edits are refused meanwhile.
     private(set) var isBusy = false
     /// Set when the config file exists but cannot be read. Nothing may be saved then, so the file is never overwritten.
     private(set) var configError: String?
 
     var isPaused: Bool { status.isPaused }
+    /// The settings controls are disabled while this is true.
+    var isLocked: Bool { isBusy || pendingFolder != nil }
 
     @ObservationIgnored private var engineStatus: EngineStatus = .empty
     @ObservationIgnored private var engine: SyncEngine?
     @ObservationIgnored private let store: ConfigStore
     @ObservationIgnored private let log: FileLog
     @ObservationIgnored private let notifier: Notifier
-    @ObservationIgnored private let flow = SetupFlow(process: SystemProcessRunner())
+    @ObservationIgnored private let flow: SetupFlow
 
     init(store: ConfigStore = ConfigStore(url: ConfigStore.defaultURL), log: FileLog = FileLog(url: FileLog.defaultURL)) {
         self.store = store
         self.log = log
         self.notifier = Notifier(log: log)
+        self.flow = SetupFlow(process: SystemProcessRunner(), log: { log.write($0) })
         self.config = Config.initial(home: NSHomeDirectory())
     }
 
@@ -45,8 +56,9 @@ enum ConnectionState: Equatable {
 
     /// The one place that decides whether anything may be saved: never over an unreadable file.
     private var canSave: Bool { configError == nil }
-    /// Settings actions additionally wait for a running server request, so no snapshot can go stale.
-    private var canEdit: Bool { canSave && !isBusy }
+    /// Settings actions additionally wait for a running server request or a pending confirmation,
+    /// so no snapshot can go stale.
+    private var canEdit: Bool { canSave && !isLocked }
 
     func start() {
         guard !hasStarted else { return }
@@ -138,29 +150,54 @@ enum ConnectionState: Equatable {
         }
     }
 
-    /// Returns nil if the folder was rejected (see `issue`), otherwise the inspection report.
-    func addFolder(localPath: String, remoteEntered: String) async -> FolderReport? {
-        guard canEdit else { return nil }
+    /// Inspects the folder before anything is saved, so that no sync starts before its warnings
+    /// have been seen. With warnings the folder waits in `pendingFolder` for `confirmPendingFolder()`.
+    /// Returns true when the folder was added.
+    func addFolder(localPath: String, remoteEntered: String) async -> Bool {
+        guard canEdit else { return false }
         isBusy = true
         defer { isBusy = false }
-        folderWarnings = []
+        issue = nil
+        let report = await Task.detached { FolderInspector.inspect(path: localPath) }.value
+        switch FolderAddStep.after(report, confirmed: false) {
+        case .confirm:
+            pendingFolder = PendingFolder(localPath: localPath, remoteEntered: remoteEntered, report: report)
+            return false
+        case .add:
+            return await performAdd(localPath: localPath, remoteEntered: remoteEntered)
+        }
+    }
+
+    /// Adds the pending folder despite its warnings. Returns true when the folder was added.
+    func confirmPendingFolder() async -> Bool {
+        guard canSave, !isBusy, let pending = pendingFolder else { return false }
+        isBusy = true
+        defer { isBusy = false }
+        pendingFolder = nil
+        guard FolderAddStep.after(pending.report, confirmed: true) == .add else { return false }
+        return await performAdd(localPath: pending.localPath, remoteEntered: pending.remoteEntered)
+    }
+
+    /// Discards the pending folder; nothing was saved.
+    func cancelPendingFolder() {
+        guard !isBusy else { return }
+        pendingFolder = nil
+    }
+
+    private func performAdd(localPath: String, remoteEntered: String) async -> Bool {
         switch await flow.addFolder(to: config, localPath: localPath, remoteEntered: remoteEntered) {
         case .rejected(let message):
             issue = message
-            return nil
+            return false
         case .added(let updated):
             issue = apply(updated)
-            if issue != nil { return nil }
-            let report = await Task.detached { FolderInspector.inspect(path: localPath) }.value
-            folderWarnings = report.warnings
-            return report
+            return issue == nil
         }
     }
 
     func removeFolder(_ folder: FolderConfig) {
         guard canEdit else { return }
         issue = apply(SetupFlow.removeFolder(folder, from: config))
-        folderWarnings = []
     }
 
     func state(of folder: FolderConfig) -> FolderStatus? {

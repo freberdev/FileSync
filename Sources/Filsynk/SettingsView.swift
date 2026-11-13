@@ -50,7 +50,7 @@ struct SettingsView: View {
         Section("Server") {
             TextField("Adress", text: $serverDraft, prompt: Text("användare@server"))
                 .focused($serverFocused)
-                .disabled(model.isBusy)
+                .disabled(model.isLocked)
                 .onSubmit { model.setServer(serverDraft) }
                 .onChange(of: serverFocused) { _, focused in if !focused { model.setServer(serverDraft) } }
             LabeledContent("Nyckel") { Text(model.config.identityFile).textSelection(.enabled) }
@@ -60,8 +60,13 @@ struct SettingsView: View {
                     guard model.config.server == serverDraft.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
                     Task { await model.testConnection() }
                 }
-                .disabled(model.isBusy)
+                .disabled(model.isLocked)
                 connectionLine
+            }
+            if !model.config.isVerified && model.connection == .unknown {
+                Text("Skriv serverns adress och tryck Testa anslutning. Första gången skapas en egen nyckel, och du får ett kommando att köra i Terminal för att lägga in den på servern.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             if model.needsKeyInstall {
                 HStack {
@@ -96,7 +101,7 @@ struct SettingsView: View {
                     Text(StatusPresentation.displayPath(folder.path, home: home))
                 }
                 TableColumn("På servern") { folder in
-                    Text(StatusPresentation.displayPath(folder.remotePath, home: home))
+                    Text(remoteDisplayPath(folder.remotePath))
                 }
                 TableColumn("") { folder in
                     Text(stateLabel(folder))
@@ -104,12 +109,10 @@ struct SettingsView: View {
             }
             .frame(minHeight: 120)
 
-            ForEach(model.folderWarnings, id: \.self) { Text($0).foregroundStyle(.secondary) }
-
             HStack {
                 Button { chooseFolder() } label: { Image(systemName: "plus") }
                     .accessibilityLabel("Lägg till mapp")
-                    .disabled(model.isBusy)
+                    .disabled(model.isLocked)
                 Button {
                     if let folder = model.config.folders.first(where: { $0.path == selection }) {
                         model.removeFolder(folder)
@@ -117,7 +120,7 @@ struct SettingsView: View {
                     }
                 } label: { Image(systemName: "minus") }
                     .accessibilityLabel("Ta bort mapp")
-                    .disabled(selection == nil || model.isBusy)
+                    .disabled(selection == nil || model.isLocked)
             }
             Text("Inget tas bort på servern.").font(.caption).foregroundStyle(.secondary)
 
@@ -126,19 +129,45 @@ struct SettingsView: View {
                     Text(StatusPresentation.displayPath(local, home: home))
                     Image(systemName: "arrow.right")
                     TextField("Sökväg på servern", text: $pendingRemote)
+                        .disabled(model.isLocked)
                     Button("Lägg till") {
                         let remote = pendingRemote
                         Task {
-                            if await model.addFolder(localPath: local, remoteEntered: remote) != nil {
+                            if await model.addFolder(localPath: local, remoteEntered: remote) {
                                 pendingLocalPath = nil
                             }
                         }
                     }
-                    .disabled(model.isBusy)
+                    .disabled(model.isLocked)
                     Button("Avbryt") { pendingLocalPath = nil }
+                        .disabled(model.isLocked)
+                    if model.isBusy { ProgressView().controlSize(.small) }
+                }
+            }
+
+            if let pending = model.pendingFolder {
+                ForEach(pending.warnings, id: \.self) { Text($0) }
+                HStack {
+                    Button("Lägg till ändå") {
+                        Task {
+                            if await model.confirmPendingFolder() { pendingLocalPath = nil }
+                        }
+                    }
+                    .disabled(model.isBusy)
+                    Button("Avbryt") {
+                        model.cancelPendingFolder()
+                        pendingLocalPath = nil
+                    }
+                    .disabled(model.isBusy)
                 }
             }
         }
+    }
+
+    /// The server's home directory is shown as "~", like the Mac's in the other column.
+    private func remoteDisplayPath(_ path: String) -> String {
+        let remoteHome = model.config.verifiedHome
+        return remoteHome.isEmpty ? path : StatusPresentation.displayPath(path, home: remoteHome)
     }
 
     private func stateLabel(_ folder: FolderConfig) -> String {
@@ -163,7 +192,7 @@ struct SettingsView: View {
         Section("Undantag (gäller alla mappar)") {
             TextField("Undantag", text: $excludesDraft, prompt: Text("node_modules, *.tmp"))
                 .focused($excludesFocused)
-                .disabled(model.isBusy)
+                .disabled(model.isLocked)
                 .onSubmit { model.setExcludes(excludesDraft) }
                 .onChange(of: excludesFocused) { _, focused in if !focused { model.setExcludes(excludesDraft) } }
         }

@@ -29,6 +29,19 @@ public struct FolderReport: Equatable, Sendable {
     }
 }
 
+/// What happens to a folder about to be added, once it has been inspected.
+public enum FolderAddStep: Equatable, Sendable {
+    /// Add it now.
+    case add
+    /// Show these warnings and add only if the user confirms.
+    case confirm([String])
+
+    public static func after(_ report: FolderReport, confirmed: Bool) -> FolderAddStep {
+        let warnings = report.warnings
+        return warnings.isEmpty || confirmed ? .add : .confirm(warnings)
+    }
+}
+
 public enum FolderInspector {
     public static let largeFolderThreshold = 100_000
 

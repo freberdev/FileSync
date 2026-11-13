@@ -9,11 +9,6 @@ struct Notifier: Sendable {
 
     private var canNotify: Bool { Bundle.main.bundleIdentifier != nil && Bundle.main.bundlePath.hasSuffix(".app") }
 
-    func requestPermission() {
-        guard canNotify else { return }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
-    }
-
     func post(_ notice: Notice) {
         let line = "\(notice.title): \(notice.body)"
         guard canNotify else {
