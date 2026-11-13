@@ -19,6 +19,8 @@ struct FilsynkApp: App {
             Text("Inställningar kommer snart")
                 .padding(40)
         }
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
     }
 
     @MainActor private func startOnce() {
