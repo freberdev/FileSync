@@ -74,6 +74,17 @@ import Testing
         #expect(VolumeLookup.relativePath(of: "/", on: root) == "")
     }
 
+    @Test func lookupRefusesPathsThatAreNotPlainAbsolute() {
+        let root = volume("R", "Macintosh HD", "/", format: .apfs, isSystem: true)
+        let hdd = volume("H", "HDD", "/Volumes/HDD")
+        for path in ["Volumes/HDD/a", "", "/Volumes/HDD/../HDD/a", "/Volumes/HDD/./a", "/Volumes/HDD/a/..", "/Volumes/../Users"] {
+            #expect(VolumeLookup.volume(containing: path, in: [root, hdd]) == nil)
+            #expect(VolumeLookup.relativePath(of: path, on: hdd) == nil)
+            #expect(VolumeLookup.relativePath(of: path, on: root) == nil)
+        }
+        #expect(VolumeLookup.volume(containing: "/Volumes/HDD/..a/.b", in: [root, hdd]) == hdd)
+    }
+
     @Test func systemMonitorListsTheSystemVolume() {
         let v = SystemVolumeMonitor().mountedVolumes()
         #expect(v.contains { $0.isSystem && $0.format == .apfs && $0.uuid != nil })

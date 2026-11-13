@@ -63,20 +63,28 @@ public struct SetupFlow: Sendable {
         return (result, updated)
     }
 
-    /// What can be judged about adding the folder without the server and without looking at the
-    /// folder itself: the message to show, or nil when nothing speaks against it. Starts no process.
+    /// What can be judged about adding the server destination without the server and without looking
+    /// at the folder itself: the message to show, or nil when nothing speaks against it. Starts no process.
     public func addRejection(to config: Config, localPath: String, remoteEntered: String) -> String? {
         let entered = remoteEntered.trimmingCharacters(in: .whitespacesAndNewlines)
         if !config.isVerified { return "Testa anslutningen först." }
 
-        // Nested or unsafe paths.
         var candidate = config
-        candidate.folders.append(FolderConfig(path: localPath, remotePath: entered))
+        if let index = Self.folderIndex(of: localPath, in: config) {
+            if config.folders[index].destinations.contains(where: \.isServer) {
+                return "Mappen har redan ett mål på servern."
+            }
+            candidate.folders[index].remotePath = entered
+        } else {
+            // Nested or unsafe paths.
+            candidate.folders.append(FolderConfig(path: localPath, remotePath: entered))
+        }
         return candidate.validate().first?.message
     }
 
-    /// Resolves the remote path and appends the folder. Never returns an invalid config.
-    public func addFolder(to config: Config, localPath: String, remoteEntered: String) async -> AddFolderResult {
+    /// Resolves the remote path and adds it to the folder, or appends the folder when it is new.
+    /// Never returns an invalid config.
+    public func addServerDestination(to config: Config, localPath: String, remoteEntered: String) async -> AddFolderResult {
         let entered = remoteEntered.trimmingCharacters(in: .whitespacesAndNewlines)
         if let message = addRejection(to: config, localPath: localPath, remoteEntered: entered) {
             return .rejected(message)
@@ -91,9 +99,18 @@ public struct SetupFlow: Sendable {
 
         // Nesting between remote paths can only be judged once the path is absolute.
         var result = config
-        result.folders.append(FolderConfig(path: localPath, remotePath: resolved))
+        if let index = Self.folderIndex(of: localPath, in: config) {
+            result.folders[index].remotePath = resolved
+        } else {
+            result.folders.append(FolderConfig(path: localPath, remotePath: resolved))
+        }
         if let issue = result.validate().first { return .rejected(issue.message) }
         return .added(result)
+    }
+
+    /// Resolves the remote path and appends the folder. Never returns an invalid config.
+    public func addFolder(to config: Config, localPath: String, remoteEntered: String) async -> AddFolderResult {
+        await addServerDestination(to: config, localPath: localPath, remoteEntered: remoteEntered)
     }
 
     /// Removes the folder from the configuration only; nothing is deleted on the server.
@@ -101,6 +118,172 @@ public struct SetupFlow: Sendable {
         var updated = config
         updated.folders.removeAll { $0 == folder }
         return updated
+    }
+
+    /// Removes one destination from the configuration only; nothing is touched on the server or the
+    /// disk. The folder goes when its last destination does.
+    public static func removeDestination(_ destinationID: String, fromFolder path: String, in config: Config) -> Config {
+        var updated = config
+        guard let index = updated.folders.firstIndex(where: { $0.path == path }) else { return config }
+        let before = updated.folders[index].destinations.count
+        updated.folders[index].destinations.removeAll { $0.id == destinationID }
+        guard updated.folders[index].destinations.count < before else { return config }
+        if updated.folders[index].destinations.isEmpty { updated.folders.remove(at: index) }
+        return updated
+    }
+
+    // MARK: Disk destinations
+
+    private struct DiskPlan {
+        var config: Config
+        var destination: String
+        var hasMarker: Bool
+        var folder: String
+    }
+
+    /// What can be judged about adding the disk destination without writing anything: the message to
+    /// show, or nil when nothing speaks against it. Only reads (stat and a listing of the picked folder).
+    public func diskRejection(to config: Config, localPath: String, pickedPath: String,
+                              volumes: [VolumeInfo]) -> String? {
+        if case .failure(let rejection) = diskPlan(config, localPath: localPath, pickedPath: pickedPath, volumes: volumes) {
+            return rejection.text
+        }
+        return nil
+    }
+
+    /// Adds the disk destination and writes the marker in the picked folder when it has none. The folder
+    /// must be empty (or already carry the marker); nothing on the disk is moved, changed or removed.
+    /// Never returns an invalid config.
+    public func addDiskDestination(to config: Config, localPath: String, pickedPath: String,
+                                   volumes: [VolumeInfo]) -> AddFolderResult {
+        switch diskPlan(config, localPath: localPath, pickedPath: pickedPath, volumes: volumes) {
+        case .failure(let rejection):
+            return .rejected(rejection.text)
+        case .success(let plan):
+            if !plan.hasMarker {
+                do {
+                    try DiskMarker.write(in: plan.destination, folder: plan.folder)
+                } catch {
+                    log?("Kunde inte skriva markören i \(plan.destination): \(error)")
+                    return .rejected("Kunde inte skriva till mappen på disken.")
+                }
+            }
+            return .added(plan.config)
+        }
+    }
+
+    private struct Rejection: Error { var text: String }
+
+    private func diskPlan(_ config: Config, localPath: String, pickedPath: String,
+                          volumes: [VolumeInfo]) -> Result<DiskPlan, Rejection> {
+        func reject(_ text: String) -> Result<DiskPlan, Rejection> { .failure(Rejection(text: text)) }
+
+        let picked = Self.resolvingExistingPart(of: pickedPath)
+        guard let volume = VolumeLookup.volume(containing: picked, in: volumes),
+              let uuid = volume.uuid, !uuid.isEmpty else {
+            return reject("Disken saknar id och kan inte användas.")
+        }
+        if volume.isSystem { return reject("Välj en mapp på en extern disk.") }
+        if !volume.format.isSupported {
+            return reject("Disken måste vara formaterad som APFS, Mac OS Extended eller exFAT.")
+        }
+        guard let relative = VolumeLookup.relativePath(of: picked, on: volume) else {
+            return reject("Disken saknar id och kan inte användas.")
+        }
+        if relative.isEmpty { return reject("Välj en mapp på disken, inte diskens rot.") }
+
+        guard let destination = Self.realPath(pickedPath), Self.isDirectory(destination) else {
+            return reject("Mappen finns inte.")
+        }
+        guard localPath.hasPrefix("/") else { return reject(ConfigIssue.localPathNotAbsolute(localPath).message) }
+        guard let local = Self.realPath(localPath), Self.isDirectory(local) else {
+            return reject("Mappen finns inte.")
+        }
+
+        let hasMarker = DiskMarker.exists(in: destination)
+        if !hasMarker, !Self.holdsOnlyFinderFiles(destination) {
+            return reject("Mappen på disken måste vara tom. Skapa en ny mapp för säkerhetskopian.")
+        }
+
+        let destinationParts = Self.components(destination)
+        var watched = config.folders.map { Self.resolved($0.path) }
+        watched.append(local)
+        for path in watched {
+            let parts = Self.components(path)
+            if Self.isPrefix(parts, of: destinationParts) || Self.isPrefix(destinationParts, of: parts) {
+                return reject("Mappen på disken och en bevakad mapp ligger inuti varandra.")
+            }
+        }
+
+        let location = DiskLocation(volumeUUID: uuid, volumeName: volume.name, path: relative)
+        var candidate = config
+        if let index = candidate.folders.firstIndex(where: { Self.resolved($0.path) == local }) {
+            if candidate.folders[index].destinations.contains(.disk(location)) {
+                return reject("Mappen har redan det här målet.")
+            }
+            candidate.folders[index].destinations.append(.disk(location))
+        } else {
+            var folder = FolderConfig(path: local, destinations: [.disk(location)])
+            if let source = VolumeLookup.volume(containing: local, in: volumes),
+               !source.isSystem, let id = source.uuid, !id.isEmpty {
+                folder.sourceVolumeUUID = id
+            }
+            candidate.folders.append(folder)
+        }
+        if let issue = candidate.validate().first { return reject(issue.message) }
+        return .success(DiskPlan(config: candidate, destination: destination, hasMarker: hasMarker, folder: local))
+    }
+
+    private static func folderIndex(of localPath: String, in config: Config) -> Int? {
+        let wanted = (localPath as NSString).standardizingPath
+        return config.folders.firstIndex { ($0.path as NSString).standardizingPath == wanted }
+    }
+
+    private static func components(_ path: String) -> [String] {
+        path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+    }
+
+    private static func isPrefix(_ prefix: [String], of path: [String]) -> Bool {
+        prefix.count <= path.count && Array(path.prefix(prefix.count)) == prefix
+    }
+
+    private static func realPath(_ path: String) -> String? {
+        guard let result = realpath(path, nil) else { return nil }
+        defer { free(result) }
+        return String(cString: result)
+    }
+
+    private static func resolved(_ path: String) -> String {
+        realPath(path) ?? (path as NSString).standardizingPath
+    }
+
+    /// The path with its longest existing part resolved, so a folder that is missing can still be
+    /// placed on a volume.
+    private static func resolvingExistingPart(of path: String) -> String {
+        guard path.hasPrefix("/") else { return path }
+        var rest: [String] = []
+        var base = path
+        while base.count > 1 {
+            if let real = realPath(base) {
+                return rest.isEmpty ? real : ((real == "/" ? "" : real) + "/" + rest.reversed().joined(separator: "/"))
+            }
+            let name = (base as NSString).lastPathComponent
+            guard !name.isEmpty else { break }
+            rest.append(name)
+            base = (base as NSString).deletingLastPathComponent
+        }
+        return path
+    }
+
+    private static func isDirectory(_ path: String) -> Bool {
+        var info = stat()
+        return stat(path, &info) == 0 && info.st_mode & S_IFMT == S_IFDIR
+    }
+
+    /// Only `.DS_Store`, `._*` files and a marker; false when the listing fails.
+    private static func holdsOnlyFinderFiles(_ directory: String) -> Bool {
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else { return false }
+        return names.allSatisfy { $0 == ".DS_Store" || $0.hasPrefix("._") }
     }
 
     /// A short text for the user; anything unexpected is written to the log in full.

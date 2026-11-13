@@ -157,6 +157,7 @@ public enum VolumeLookup {
 
     /// Volymen vars monteringspunkt är det längsta prefixet av sökvägen, jämfört på komponenter.
     public static func volume(containing path: String, in volumes: [VolumeInfo]) -> VolumeInfo? {
+        guard isPlainAbsolute(path) else { return nil }
         let target = components(path)
         return volumes
             .filter { target.starts(with: components($0.mountPath)) }
@@ -165,10 +166,17 @@ public enum VolumeLookup {
 
     /// Sökvägen relativ volymens rot, eller nil om den inte ligger på volymen. Roten ger "".
     public static func relativePath(of path: String, on volume: VolumeInfo) -> String? {
+        guard isPlainAbsolute(path) else { return nil }
         let root = components(volume.mountPath)
         let target = components(path)
         guard target.starts(with: root) else { return nil }
         return target.dropFirst(root.count).joined(separator: "/")
+    }
+
+    /// Absolut och utan komponenterna `.` och `..`.
+    private static func isPlainAbsolute(_ path: String) -> Bool {
+        guard path.hasPrefix("/") else { return false }
+        return !path.split(separator: "/", omittingEmptySubsequences: true).contains { $0 == "." || $0 == ".." }
     }
 
     private static func components(_ path: String) -> [String] {

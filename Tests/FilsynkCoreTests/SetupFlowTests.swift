@@ -322,3 +322,385 @@ struct SetupFlowTests {
         #expect(SetupFlow.removeFolder(.init(path: "/nope", remotePath: "/x"), from: c) == c)
     }
 }
+
+/// Temporary directories stand in for disks; the volume list is built by hand.
+struct DiskDestinationTests {
+    private let root: String
+    private let source: String
+    private let disk: String
+    private let sourceDisk: String
+    private let system = VolumeInfo(uuid: "SYS", name: "Macintosh HD", mountPath: "/", format: .apfs, isSystem: true)
+
+    init() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("filsynk-disk-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: base, withIntermediateDirectories: true)
+        root = realpath(base, nil).map { String(cString: $0) } ?? base
+        source = root + "/src"
+        disk = root + "/disk"
+        sourceDisk = root + "/disk2"
+        for path in [source, disk, sourceDisk] {
+            try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        }
+    }
+
+    private var volumes: [VolumeInfo] {
+        [system,
+         VolumeInfo(uuid: "U1", name: "Testdisk", mountPath: disk, format: .exfat, isSystem: false),
+         VolumeInfo(uuid: "U2", name: "Källdisk", mountPath: sourceDisk, format: .apfs, isSystem: false)]
+    }
+
+    private func flow() -> SetupFlow { SetupFlow(process: ScriptedProcess()) }
+
+    private func config(_ folders: [FolderConfig] = []) -> Config {
+        Config(server: "u@h", folders: folders, verifiedServer: "u@h", verifiedHome: "/home/u", verifiedLogicalHome: "/home/u")
+    }
+
+    @discardableResult
+    private func makeDirectory(_ path: String) throws -> String {
+        try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        return path
+    }
+
+    private func write(_ path: String, _ text: String = "x") {
+        FileManager.default.createFile(atPath: path, contents: Data(text.utf8))
+    }
+
+    private func marked(_ path: String) throws {
+        try DiskMarker.write(in: path, folder: "/elsewhere")
+    }
+
+    /// Every path below `directory` with its kind, contents and modification time.
+    private func snapshot(_ directory: String) -> [String] {
+        let fm = FileManager.default
+        var lines: [String] = []
+        for name in (fm.subpaths(atPath: directory) ?? []).sorted() {
+            let path = directory + "/" + name
+            let attributes = try? fm.attributesOfItem(atPath: path)
+            let date = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+            let content = (fm.contents(atPath: path)).map { String(decoding: $0, as: UTF8.self) } ?? "<katalog>"
+            lines.append("\(name)|\(content)|\(date)")
+        }
+        return lines
+    }
+
+    private static let notEmpty = "Mappen på disken måste vara tom. Skapa en ny mapp för säkerhetskopian."
+
+    // MARK: adding
+
+    @Test func addsDiskDestinationToNewFolderAndWritesMarker() throws {
+        let target = try makeDirectory(disk + "/Backup")
+        let out = flow().addDiskDestination(to: config(), localPath: source, pickedPath: target, volumes: volumes)
+        guard case .added(let updated) = out else { Issue.record("expected added, got \(out)"); return }
+        #expect(updated.folders == [FolderConfig(
+            path: source,
+            destinations: [.disk(DiskLocation(volumeUUID: "U1", volumeName: "Testdisk", path: "Backup"))])])
+        #expect(updated.validate().isEmpty)
+        #expect(DiskMarker.exists(in: target))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: target) == [DiskMarker.name])
+        let text = try String(contentsOfFile: target + "/" + DiskMarker.name, encoding: .utf8)
+        #expect(text.hasPrefix(source + "\n"))
+    }
+
+    @Test func addsDiskDestinationToFolderThatHasServerDestination() throws {
+        let target = try makeDirectory(disk + "/Backup")
+        let c = config([FolderConfig(path: source, remotePath: "/srv/A")])
+        let out = flow().addDiskDestination(to: c, localPath: source, pickedPath: target, volumes: volumes)
+        guard case .added(let updated) = out else { Issue.record("expected added, got \(out)"); return }
+        #expect(updated.folders.count == 1)
+        #expect(updated.folders[0].destinations == [
+            .server(path: "/srv/A"),
+            .disk(DiskLocation(volumeUUID: "U1", volumeName: "Testdisk", path: "Backup")),
+        ])
+        #expect(DiskMarker.exists(in: target))
+    }
+
+    @Test func addsServerDestinationToFolderThatHasDiskDestination() async {
+        let location = DiskLocation(volumeUUID: "U1", volumeName: "Testdisk", path: "Backup")
+        let c = config([FolderConfig(path: "/Users/x/A", destinations: [.disk(location)])])
+        let p = ScriptedProcess()
+        let out = await SetupFlow(process: p).addServerDestination(to: c, localPath: "/Users/x/A/", remoteEntered: "~/A")
+        guard case .added(let updated) = out else { Issue.record("expected added, got \(out)"); return }
+        #expect(updated.folders.count == 1)
+        #expect(updated.folders[0].destinations == [.disk(location), .server(path: "/home/u/A")])
+        #expect(updated.validate().isEmpty)
+    }
+
+    @Test func rejectsSecondServerDestination() async {
+        let c = config([FolderConfig(path: "/Users/x/A", remotePath: "/srv/A")])
+        let p = ScriptedProcess()
+        let out = await SetupFlow(process: p).addServerDestination(to: c, localPath: "/Users/x/A", remoteEntered: "~/B")
+        #expect(out == .rejected("Mappen har redan ett mål på servern."))
+        #expect(!p.contactedServer)
+    }
+
+    @Test func addFolderStillAppendsNewFolders() async {
+        let out = await SetupFlow(process: ScriptedProcess()).addFolder(to: config(), localPath: "/Users/x/A", remoteEntered: "~/A")
+        #expect(out == .added(config([FolderConfig(path: "/Users/x/A", remotePath: "/home/u/A")])))
+    }
+
+    @Test func acceptsFolderWithOnlyFinderFiles() throws {
+        let target = try makeDirectory(disk + "/Backup")
+        write(target + "/.DS_Store")
+        write(target + "/._x")
+        #expect(flow().diskRejection(to: config(), localPath: source, pickedPath: target, volumes: volumes) == nil)
+        let out = flow().addDiskDestination(to: config(), localPath: source, pickedPath: target, volumes: volumes)
+        guard case .added = out else { Issue.record("expected added, got \(out)"); return }
+        #expect(DiskMarker.exists(in: target))
+        #expect(FileManager.default.fileExists(atPath: target + "/.DS_Store"))
+    }
+
+    @Test func acceptsNonEmptyFolderThatHasMarker() throws {
+        let target = try makeDirectory(disk + "/Backup")
+        try marked(target)
+        write(target + "/gammal.txt", "kvar")
+        try makeDirectory(target + "/Raderat")
+        let before = snapshot(target)
+        #expect(flow().diskRejection(to: config(), localPath: source, pickedPath: target, volumes: volumes) == nil)
+        let out = flow().addDiskDestination(to: config(), localPath: source, pickedPath: target, volumes: volumes)
+        guard case .added = out else { Issue.record("expected added, got \(out)"); return }
+        #expect(snapshot(target) == before) // the existing marker is not rewritten
+    }
+
+    @Test func rejectsWhenMarkerCannotBeWritten() throws {
+        let target = try makeDirectory(disk + "/Backup")
+        chmod(target, 0o555)
+        defer { chmod(target, 0o755) }
+        let c = config()
+        let out = flow().addDiskDestination(to: c, localPath: source, pickedPath: target, volumes: volumes)
+        #expect(out == .rejected("Kunde inte skriva till mappen på disken."))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: target).isEmpty)
+    }
+
+    // MARK: rejections
+
+    @Test func rejectsNonEmptyFolderOnDisk() throws {
+        let target = try makeDirectory(disk + "/Backup")
+        write(target + "/foto.jpg", "bild")
+        let before = snapshot(root)
+        let out = flow().addDiskDestination(to: config(), localPath: source, pickedPath: target, volumes: volumes)
+        #expect(out == .rejected(Self.notEmpty))
+        #expect(snapshot(root) == before)
+        #expect(!DiskMarker.exists(in: target))
+        #expect(try String(contentsOfFile: target + "/foto.jpg", encoding: .utf8) == "bild")
+    }
+
+    @Test func rejectsRaderatFolderWithoutMarkerAndFilsynkThatIsNotAMarker() throws {
+        let a = try makeDirectory(disk + "/A")
+        try makeDirectory(a + "/Raderat")
+        #expect(flow().diskRejection(to: config(), localPath: source, pickedPath: a, volumes: volumes) == Self.notEmpty)
+        let b = try makeDirectory(disk + "/B")
+        try makeDirectory(b + "/.filsynk") // a directory is not the marker
+        #expect(flow().diskRejection(to: config(), localPath: source, pickedPath: b, volumes: volumes) == Self.notEmpty)
+    }
+
+    @Test func rejectsVolumeRoot() {
+        let out = flow().diskRejection(to: config(), localPath: source, pickedPath: disk, volumes: volumes)
+        #expect(out == "Välj en mapp på disken, inte diskens rot.")
+    }
+
+    @Test func rejectsSystemVolume() throws {
+        let target = try makeDirectory(root + "/vanlig")
+        #expect(flow().diskRejection(to: config(), localPath: source, pickedPath: target, volumes: volumes)
+                == "Välj en mapp på en extern disk.")
+        // Also when the folder does not exist: the volume is judged first.
+        #expect(flow().diskRejection(to: config(), localPath: source, pickedPath: root + "/saknas", volumes: volumes)
+                == "Välj en mapp på en extern disk.")
+    }
+
+    @Test func rejectsUnsupportedFormat() throws {
+        let target = try makeDirectory(disk + "/Backup")
+        var list = volumes
+        list[1].format = .other("ntfs")
+        #expect(flow().diskRejection(to: config(), localPath: source, pickedPath: target, volumes: list)
+                == "Disken måste vara formaterad som APFS, Mac OS Extended eller exFAT.")
+    }
+
+    @Test func rejectsVolumeWithoutID() throws {
+        let target = try makeDirectory(disk + "/Backup")
+        for id in [nil, ""] as [String?] {
+            var list = volumes
+            list[1].uuid = id
+            #expect(flow().diskRejection(to: config(), localPath: source, pickedPath: target, volumes: list)
+                    == "Disken saknar id och kan inte användas.")
+        }
+        #expect(flow().diskRejection(to: config(), localPath: source, pickedPath: "disk/Backup", volumes: volumes)
+                == "Disken saknar id och kan inte användas.")
+    }
+
+    @Test func rejectsMissingFolder() {
+        for path in [disk + "/Saknas", disk + "/Saknas/Djupare"] {
+            let out = flow().addDiskDestination(to: config(), localPath: source, pickedPath: path, volumes: volumes)
+            #expect(out == .rejected("Mappen finns inte."))
+            #expect(!FileManager.default.fileExists(atPath: path))
+        }
+    }
+
+    @Test func rejectsPickedFileAndMissingSource() throws {
+        write(disk + "/fil")
+        #expect(flow().diskRejection(to: config(), localPath: source, pickedPath: disk + "/fil", volumes: volumes)
+                == "Mappen finns inte.")
+        let target = try makeDirectory(disk + "/Backup")
+        #expect(flow().diskRejection(to: config(), localPath: root + "/saknas", pickedPath: target, volumes: volumes)
+                == "Mappen finns inte.")
+    }
+
+    @Test func rejectsDestinationInsideWatchedFolder() throws {
+        let watched = try makeDirectory(disk + "/Watched")
+        let target = try makeDirectory(watched + "/Backup")
+        let c = config([FolderConfig(path: watched, remotePath: "/srv/W")])
+        #expect(flow().diskRejection(to: c, localPath: source, pickedPath: target, volumes: volumes)
+                == "Mappen på disken och en bevakad mapp ligger inuti varandra.")
+        // The folder being added counts too.
+        #expect(flow().diskRejection(to: config(), localPath: watched, pickedPath: target, volumes: volumes)
+                == "Mappen på disken och en bevakad mapp ligger inuti varandra.")
+        // Through a symbolic link.
+        let link = root + "/lank"
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: watched)
+        #expect(flow().diskRejection(to: config(), localPath: link, pickedPath: target, volumes: volumes)
+                == "Mappen på disken och en bevakad mapp ligger inuti varandra.")
+    }
+
+    @Test func rejectsWatchedFolderInsideDestination() throws {
+        let target = try makeDirectory(disk + "/Backup")
+        try marked(target)
+        let inner = try makeDirectory(target + "/Inner")
+        let c = config([FolderConfig(path: inner, remotePath: "/srv/I")])
+        #expect(flow().diskRejection(to: c, localPath: source, pickedPath: target, volumes: volumes)
+                == "Mappen på disken och en bevakad mapp ligger inuti varandra.")
+        #expect(flow().diskRejection(to: config(), localPath: inner, pickedPath: target, volumes: volumes)
+                == "Mappen på disken och en bevakad mapp ligger inuti varandra.")
+    }
+
+    @Test func siblingWithSamePrefixIsNotNested() throws {
+        let sibling = try makeDirectory(disk + "/Backup2")
+        let target = try makeDirectory(disk + "/Backup")
+        let c = config([FolderConfig(path: sibling, remotePath: "/srv/S")])
+        #expect(flow().diskRejection(to: c, localPath: source, pickedPath: target, volumes: volumes) == nil)
+    }
+
+    @Test func rejectsSameDestinationTwice() throws {
+        let target = try makeDirectory(disk + "/Backup")
+        guard case .added(let once) = flow().addDiskDestination(
+            to: config(), localPath: source, pickedPath: target, volumes: volumes) else {
+            Issue.record("expected added"); return
+        }
+        let again = flow().addDiskDestination(to: once, localPath: source, pickedPath: target, volumes: volumes)
+        #expect(again == .rejected("Mappen har redan det här målet."))
+    }
+
+    @Test func rejectsNestedDestinationsOnTheSameDisk() throws {
+        let outer = try makeDirectory(disk + "/Outer")
+        try marked(outer)
+        let inner = try makeDirectory(outer + "/Inner")
+        try marked(inner)
+        let other = try makeDirectory(root + "/src2")
+        guard case .added(let once) = flow().addDiskDestination(
+            to: config(), localPath: source, pickedPath: outer, volumes: volumes) else {
+            Issue.record("expected added"); return
+        }
+        let out = flow().diskRejection(to: once, localPath: other, pickedPath: inner, volumes: volumes)
+        #expect(out == ConfigIssue.nestedDiskPaths("Outer", "Outer/Inner").message)
+    }
+
+    @Test func diskRejectionWritesNothing() throws {
+        let nonEmpty = try makeDirectory(disk + "/Full")
+        write(nonEmpty + "/a.txt", "a")
+        let watched = try makeDirectory(disk + "/Watched")
+        let insideWatched = try makeDirectory(watched + "/Backup")
+        let outer = try makeDirectory(disk + "/Outer")
+        try marked(outer)
+        let inner = try makeDirectory(outer + "/Inner")
+        let plain = try makeDirectory(root + "/vanlig")
+        let ntfsDisk = try makeDirectory(root + "/ntfs")
+        let ntfsTarget = try makeDirectory(ntfsDisk + "/Backup")
+
+        var list = volumes
+        list.append(VolumeInfo(uuid: "U3", name: "NTFS", mountPath: ntfsDisk, format: .other("ntfs"), isSystem: false))
+        list.append(VolumeInfo(uuid: nil, name: "Utan id", mountPath: root + "/utanid", format: .exfat, isSystem: false))
+        try makeDirectory(root + "/utanid/Backup")
+
+        let withWatched = config([FolderConfig(path: watched, remotePath: "/srv/W"),
+                                  FolderConfig(path: inner, remotePath: "/srv/I")])
+        let scenarios: [(Config, String, String)] = [
+            (config(), source, nonEmpty),
+            (config(), source, disk),
+            (config(), source, plain),
+            (config(), source, ntfsTarget),
+            (config(), source, root + "/utanid/Backup"),
+            (config(), source, disk + "/Saknas"),
+            (withWatched, source, insideWatched),
+            (withWatched, source, outer),
+            (config(), root + "/saknas", outer),
+        ]
+        let before = snapshot(root)
+        for (c, local, picked) in scenarios {
+            let text = flow().diskRejection(to: c, localPath: local, pickedPath: picked, volumes: list)
+            #expect(text != nil, "ingen avvisning för \(picked)")
+            #expect(snapshot(root) == before)
+            let out = flow().addDiskDestination(to: c, localPath: local, pickedPath: picked, volumes: list)
+            #expect(out == .rejected(text ?? ""))
+            #expect(snapshot(root) == before)
+        }
+    }
+
+    // MARK: source volume
+
+    @Test func recordsSourceVolumeForFolderOnExternalVolume() throws {
+        let target = try makeDirectory(disk + "/Backup")
+        let external = try makeDirectory(sourceDisk + "/Foton")
+        guard case .added(let onExternal) = flow().addDiskDestination(
+            to: config(), localPath: external, pickedPath: target, volumes: volumes) else {
+            Issue.record("expected added"); return
+        }
+        #expect(onExternal.folders.first?.sourceVolumeUUID == "U2")
+
+        let other = try makeDirectory(disk + "/Annan")
+        guard case .added(let onSystem) = flow().addDiskDestination(
+            to: config(), localPath: source, pickedPath: other, volumes: volumes) else {
+            Issue.record("expected added"); return
+        }
+        #expect(onSystem.folders.first?.sourceVolumeUUID == nil)
+    }
+
+    @Test func keepsSourceVolumeOfExistingFolder() throws {
+        let target = try makeDirectory(disk + "/Backup")
+        var folder = FolderConfig(path: source, remotePath: "/srv/A")
+        folder.sourceVolumeUUID = "GAMMAL"
+        guard case .added(let updated) = flow().addDiskDestination(
+            to: config([folder]), localPath: source, pickedPath: target, volumes: volumes) else {
+            Issue.record("expected added"); return
+        }
+        #expect(updated.folders.first?.sourceVolumeUUID == "GAMMAL")
+    }
+
+    // MARK: removing
+
+    private func diskLocation(_ path: String) -> DiskLocation {
+        DiskLocation(volumeUUID: "U1", volumeName: "Testdisk", path: path)
+    }
+
+    @Test func removingOneOfTwoDestinationsKeepsTheFolder() {
+        let location = diskLocation("Backup")
+        let other = FolderConfig(path: "/Users/x/B", remotePath: "/srv/B")
+        let c = config([FolderConfig(path: "/Users/x/A", destinations: [.server(path: "/srv/A"), .disk(location)]), other])
+        let afterDisk = SetupFlow.removeDestination(Destination.disk(location).id, fromFolder: "/Users/x/A", in: c)
+        #expect(afterDisk.folders[0].destinations == [.server(path: "/srv/A")])
+        #expect(afterDisk.folders[1] == other)
+        let afterServer = SetupFlow.removeDestination("server", fromFolder: "/Users/x/A", in: c)
+        #expect(afterServer.folders[0].destinations == [.disk(location)])
+    }
+
+    @Test func removingTheLastDestinationRemovesTheFolder() {
+        let location = diskLocation("Backup")
+        let other = FolderConfig(path: "/Users/x/B", remotePath: "/srv/B")
+        let c = config([FolderConfig(path: "/Users/x/A", destinations: [.disk(location)]), other])
+        let out = SetupFlow.removeDestination(Destination.disk(location).id, fromFolder: "/Users/x/A", in: c)
+        #expect(out.folders == [other])
+    }
+
+    @Test func removingSomethingThatIsNotThereChangesNothing() {
+        let c = config([FolderConfig(path: "/Users/x/A", remotePath: "/srv/A")])
+        #expect(SetupFlow.removeDestination("disk:U9:x", fromFolder: "/Users/x/A", in: c) == c)
+        #expect(SetupFlow.removeDestination("server", fromFolder: "/Users/x/Z", in: c) == c)
+    }
+}
