@@ -44,6 +44,21 @@ import Testing
         #expect(policy.evaluate(folder: "~/Sync", schedule: schedule, now: t0.addingTimeInterval(180)) == [])
     }
 
+    @Test func firstFailureAfterThreeUnreachableNotifies() {
+        var policy = NoticePolicy()
+        var schedule = makeSchedule()
+        for i in 0..<3 {
+            finishSync(&schedule, .unreachable, at: t0.addingTimeInterval(Double(i)))
+            #expect(policy.evaluate(folder: "~/Sync", schedule: schedule, now: t0.addingTimeInterval(Double(i))) == [])
+        }
+        finishSync(&schedule, .failed("Disken på servern är full"), at: t0.addingTimeInterval(10))
+        #expect(policy.evaluate(folder: "~/Sync", schedule: schedule, now: t0.addingTimeInterval(10))
+            == [.repeatedFailure(folder: "~/Sync", message: "Disken på servern är full")])
+        // Once per series.
+        finishSync(&schedule, .failed("Disken på servern är full"), at: t0.addingTimeInterval(20))
+        #expect(policy.evaluate(folder: "~/Sync", schedule: schedule, now: t0.addingTimeInterval(20)) == [])
+    }
+
     @Test func newFailureSeriesNotifiesAgain() {
         var policy = NoticePolicy()
         var schedule = makeSchedule()

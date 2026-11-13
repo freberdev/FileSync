@@ -78,10 +78,33 @@ import Testing
         s.changeDetected(at: t(0)); s.syncStarted(at: t(60))
         s.syncFinished(.failed("x"), at: t(61))
         #expect(s.failureCount == 1)
-        s.syncStarted(at: t(121)); s.syncFinished(.authDenied, at: t(122))
+        s.syncStarted(at: t(121)); s.syncFinished(.unreachable, at: t(122))
         #expect(s.failureCount == 2)
         #expect(s.nextFireDate() == t(242))
+        #expect(s.lastOutcome == .unreachable)
+    }
+
+    @Test func deniedLoginWaitsTheLongestBackoffStep() {
+        var s = makeSchedule()
+        s.changeDetected(at: t(0)); s.syncStarted(at: t(60))
+        s.syncFinished(.authDenied, at: t(61))
+        #expect(s.failureCount == 1)
         #expect(s.lastOutcome == .authDenied)
+        #expect(s.nextFireDate() == t(961))
+        // A user request still runs at once.
+        s.requestImmediate(at: t(100))
+        #expect(s.nextFireDate() == t(100))
+    }
+
+    @Test func retimedScheduleKeepsItsState() {
+        var s = makeSchedule()
+        s.changeDetected(at: t(0)); s.syncStarted(at: t(60)); s.syncFinished(.success, at: t(61))
+        s.changeDetected(at: t(100))
+        let r = s.retimed(quiet: 10, maxWait: 20, backoff: [5])
+        #expect(r.lastSuccess == t(61))
+        #expect(r.dirtySince == t(100))
+        #expect(r.isDirty)
+        #expect(r.nextFireDate() == t(110))
     }
 
     @Test func successResetsFailureCount() {

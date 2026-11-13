@@ -119,6 +119,11 @@ public actor SyncEngine {
 
     /// Stops watching and cancels running syncs; their outcomes are discarded.
     public func stop() {
+        stop(keepingSyncsOf: [])
+    }
+
+    /// Like `stop()`, but the syncs of the folders in `kept` go on running and report as usual.
+    private func stop(keepingSyncsOf kept: Set<String>) {
         guard isRunning else { return }
         isRunning = false
         generation += 1
@@ -132,7 +137,7 @@ public actor SyncEngine {
         noticeTask?.cancel()
         noticeTask = nil
         forced.removeAll()
-        for path in Array(inFlight.keys) where inFlight[path]?.discarded == false {
+        for path in Array(inFlight.keys) where inFlight[path]?.discarded == false && !kept.contains(path) {
             inFlight[path]?.task.cancel()
             inFlight[path]?.discarded = true
             if let index = slots.firstIndex(where: { $0.folder.path == path }),
@@ -145,13 +150,48 @@ public actor SyncEngine {
     }
 
     /// Stops, replaces the configuration and starts again if the engine was running.
+    ///
+    /// A folder whose local path, remote path and server are unchanged, and which takes part
+    /// before and after, keeps its schedule (last success, pending changes, failures). Its running
+    /// sync is left to finish when the sync inputs are unchanged too; otherwise it is cancelled.
     public func reload(_ config: Config) {
         let wasRunning = isRunning
-        stop()
+        let oldConfig = self.config
+        let newTiming = fixedTiming ?? EngineTiming(config: config)
+        var newSlots = Self.makeSlots(config: config, timing: newTiming)
+
+        let sameServer = oldConfig.server == config.server
+        let sameInputs = Self.sameSyncInputs(oldConfig, config)
+        func carried(_ slot: Slot) -> Bool {
+            sameServer && slot.participates
+                && slots.contains { $0.folder == slot.folder && $0.participates }
+        }
+        let kept: Set<String> = sameInputs
+            ? Set(newSlots.filter { carried($0) && inFlight[$0.folder.path]?.discarded == false }.map(\.folder.path))
+            : []
+
+        stop(keepingSyncsOf: kept)
+        for index in newSlots.indices where carried(newSlots[index]) {
+            guard let old = slots.first(where: { $0.folder == newSlots[index].folder }) else { continue }
+            newSlots[index].schedule = old.schedule.retimed(
+                quiet: newTiming.quiet, maxWait: newTiming.maxWait, backoff: newTiming.backoff)
+            newSlots[index].scheduleBeforeSync = old.scheduleBeforeSync?.retimed(
+                quiet: newTiming.quiet, maxWait: newTiming.maxWait, backoff: newTiming.backoff)
+        }
         self.config = config
-        timing = fixedTiming ?? EngineTiming(config: config)
-        slots = Self.makeSlots(config: config, timing: timing)
+        timing = newTiming
+        slots = newSlots
         if wasRunning { start() } else { publishIfChanged() }
+    }
+
+    /// The configuration a running sync was started with is still the one it would be started with now.
+    private static func sameSyncInputs(_ a: Config, _ b: Config) -> Bool {
+        a.server == b.server && a.identityFile == b.identityFile && a.rsyncPath == b.rsyncPath && a.exclude == b.exclude
+    }
+
+    /// The schedule of a folder, for inspection.
+    func schedule(of path: String) -> FolderSchedule? {
+        slots.first { $0.folder.path == path }?.schedule
     }
 
     /// Pausing holds automatic syncs; resuming requests an immediate sync of every ready folder.
@@ -191,7 +231,9 @@ public actor SyncEngine {
         guard isRunning, generation == self.generation else { return }
         isNetworkKnown = true
         let now = Date()
-        for index in slots.indices where slots[index].participates && slots[index].schedule.isDirty {
+        // A denied login is not retried early: repeated refused logins can get the Mac banned.
+        for index in slots.indices where slots[index].participates && slots[index].schedule.isDirty
+            && slots[index].schedule.lastOutcome != .authDenied {
             slots[index].schedule.requestImmediate(at: now)
         }
         runDue()

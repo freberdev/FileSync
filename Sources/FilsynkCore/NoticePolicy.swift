@@ -29,9 +29,10 @@ public enum Notice: Equatable, Sendable {
 /// `evaluate` repeatedly with an unchanged schedule never repeats a notice.
 public struct NoticePolicy: Sendable {
     private struct FolderMemory: Sendable {
-        /// `lastSuccess` at the time the auth notice was sent; the notice is rearmed when it changes.
         var authNotified = false
+        /// `lastSuccess` at the time the auth notice was sent; the notice is rearmed when it changes.
         var successAtAuthNotice: Date?
+        /// Set at the first `.failed` outcome of a series of at least three failures; cleared when the series ends.
         var failureSeriesNotified = false
         var lastStaleNotice: Date?
     }
@@ -60,8 +61,7 @@ public struct NoticePolicy: Sendable {
 
         if schedule.failureCount < Self.failureThreshold {
             mem.failureSeriesNotified = false
-        } else if schedule.failureCount == Self.failureThreshold,
-                  case .failed(let message)? = schedule.lastOutcome,
+        } else if case .failed(let message)? = schedule.lastOutcome,
                   !mem.failureSeriesNotified {
             mem.failureSeriesNotified = true
             notices.append(.repeatedFailure(folder: folder, message: message))

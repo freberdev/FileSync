@@ -364,8 +364,10 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
             try? await Task.sleep(for: .milliseconds(20))
         }
         #expect(await eventually(timeout: 5) { await runner.callCount(Self.pathA) >= 2 })
-        // A reload cancels the running syncs; the restarted ones must wait until they have ended.
-        await h.engine.reload(Self.config([Self.folderA, Self.folderB]))
+        // A reload with new sync inputs cancels the running syncs; the restarted ones must wait until they have ended.
+        var changed = Self.config([Self.folderA, Self.folderB])
+        changed.exclude = ["*.tmp"]
+        await h.engine.reload(changed)
         #expect(await eventually(timeout: 5) { await runner.callCount(Self.pathA) >= 3 })
         await settle()
         #expect(await runner.maxConcurrent[Self.pathA] == 1)
@@ -524,6 +526,129 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
         #expect(await h.runner.totalCalls == 0)
         network.releaseFirstUpdate()
         #expect(await eventually { await h.runner.callCount(Self.pathA) == 1 })
+        await h.engine.stop()
+    }
+
+    // MARK: Reload keeps unchanged folders
+
+    @Test func reloadWithNewExcludesKeepsLastSuccessAndDirtySince() async {
+        let h = Self.make(Self.config([Self.folderA, Self.folderB]))
+        await h.engine.start()
+        #expect(await eventually { h.recorder.state(of: Self.pathA) == .synced && h.recorder.state(of: Self.pathB) == .synced })
+        let lastSuccess = await h.engine.schedule(of: Self.pathA)?.lastSuccess
+        #expect(lastSuccess != nil)
+
+        await h.engine.setPaused(true)
+        h.watchers.trigger(Self.pathA)
+        #expect(await eventually { h.recorder.state(of: Self.pathA) == .pending })
+        let dirtySince = await h.engine.schedule(of: Self.pathA)?.dirtySince
+        #expect(dirtySince != nil)
+
+        var changed = Self.config([Self.folderA, Self.folderB])
+        changed.exclude = ["node_modules"]
+        await h.engine.reload(changed)
+        let after = await h.engine.schedule(of: Self.pathA)
+        #expect(after?.lastSuccess == lastSuccess)
+        #expect(after?.dirtySince == dirtySince)
+        #expect(h.recorder.latest?.folders.first { $0.path == Self.pathA }?.lastSuccess == lastSuccess)
+        await h.engine.stop()
+    }
+
+    @Test func reloadWithChangedRemotePathStartsAFreshSchedule() async {
+        let h = Self.make(Self.config([Self.folderA, Self.folderB]))
+        await h.engine.start()
+        #expect(await eventually { h.recorder.state(of: Self.pathA) == .synced })
+        await h.engine.setPaused(true)
+
+        let moved = FolderConfig(path: Self.pathA, remotePath: "/srv/A2")
+        await h.engine.reload(Self.config([moved, Self.folderB]))
+        #expect(await h.engine.schedule(of: Self.pathA)?.lastSuccess == nil)
+        #expect(await h.engine.schedule(of: Self.pathB)?.lastSuccess != nil)
+
+        // A changed server gives every folder a fresh schedule.
+        await h.engine.reload(Self.config([moved, Self.folderB], server: "other@server"))
+        #expect(await h.engine.schedule(of: Self.pathB)?.lastSuccess == nil)
+        await h.engine.stop()
+    }
+
+    @Test func reloadWithSameSyncInputsLetsRunningSyncFinish() async {
+        let runner = FakeRunner(delay: 0.3)
+        let h = Self.make(Self.config([Self.folderA]), runner: runner)
+        await h.engine.start()
+        #expect(await eventually { await runner.callCount(Self.pathA) == 1 })
+
+        var changed = Self.config([Self.folderA])
+        changed.quietSeconds = 30  // not a sync input
+        await h.engine.reload(changed)
+        // The running sync is not cancelled; the restart's request runs after it, never beside it.
+        #expect(await eventually(timeout: 5) { await runner.callCount(Self.pathA) == 2 })
+        #expect(await eventually(timeout: 5) { h.recorder.state(of: Self.pathA) == .synced })
+        await settle()
+        #expect(await runner.cancelled.isEmpty)
+        #expect(await runner.maxConcurrent[Self.pathA] == 1)
+        #expect(await runner.callCount(Self.pathA) == 2)
+        #expect(await h.engine.schedule(of: Self.pathA)?.lastSuccess != nil)
+        await h.engine.stop()
+    }
+
+    @Test func reloadWithNewSyncInputsCancelsButKeepsSchedule() async {
+        let runner = FakeRunner(delay: 0.3)
+        let h = Self.make(Self.config([Self.folderA]), runner: runner)
+        await h.engine.start()
+        #expect(await eventually { await runner.callCount(Self.pathA) == 1 })
+
+        var changed = Self.config([Self.folderA])
+        changed.exclude = ["*.tmp"]
+        await h.engine.reload(changed)
+        #expect(await eventually(timeout: 5) { await runner.cancelled == [Self.pathA] })
+        #expect(await eventually(timeout: 5) { await runner.callCount(Self.pathA) == 2 })
+        #expect(await eventually(timeout: 5) { h.recorder.state(of: Self.pathA) == .synced })
+        await settle()
+        #expect(await runner.maxConcurrent[Self.pathA] == 1)
+        #expect(await runner.callCount(Self.pathA) == 2)
+        #expect(h.recorder.notices.isEmpty)
+        await h.engine.stop()
+    }
+
+    // MARK: Denied login
+
+    @Test func deniedLoginIsNotRetriedOnNetworkChangeButSyncNowRuns() async {
+        // Last backoff step is long: only an explicit request can explain another sync.
+        let timing = EngineTiming(quiet: 0.05, maxWait: 0.5, backoff: [0.05, 60], noticeCheckInterval: 0.05)
+        let runner = FakeRunner()
+        await runner.setOutcomes([.authDenied], for: Self.pathA)
+        let h = Self.make(Self.config([Self.folderA]), timing: timing, runner: runner)
+        await h.engine.start()
+        #expect(await eventually { await runner.callCount(Self.pathA) == 1 })
+        #expect(await eventually { h.recorder.state(of: Self.pathA) == .error("Inloggningen nekades") })
+
+        await settle()  // far beyond the first backoff step (0.05)
+        #expect(await runner.callCount(Self.pathA) == 1)
+        h.network.change()
+        await settle()
+        #expect(await runner.callCount(Self.pathA) == 1)
+
+        await h.engine.syncNow()
+        #expect(await eventually { await runner.callCount(Self.pathA) == 2 })
+        await h.engine.stop()
+    }
+
+    @Test func deniedLoginIsRetriedOnResumeAndReload() async {
+        let timing = EngineTiming(quiet: 0.05, maxWait: 0.5, backoff: [0.05, 60], noticeCheckInterval: 0.05)
+        let runner = FakeRunner()
+        await runner.setOutcomes([.authDenied, .authDenied], for: Self.pathA)
+        let h = Self.make(Self.config([Self.folderA]), timing: timing, runner: runner)
+        await h.engine.start()
+        #expect(await eventually { await runner.callCount(Self.pathA) == 1 })
+        #expect(await eventually { h.recorder.state(of: Self.pathA) == .error("Inloggningen nekades") })
+
+        await h.engine.setPaused(true)
+        await h.engine.setPaused(false)
+        #expect(await eventually { await runner.callCount(Self.pathA) == 2 })
+        #expect(await eventually { h.recorder.state(of: Self.pathA) == .error("Inloggningen nekades") })
+
+        await h.engine.reload(Self.config([Self.folderA]))
+        #expect(await eventually { await runner.callCount(Self.pathA) == 3 })
         await h.engine.stop()
     }
 }
