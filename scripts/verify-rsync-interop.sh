@@ -87,14 +87,12 @@ T1=2026-01-01_000001; T2=2026-01-01_000002; T3=2026-01-01_000003; T4=2026-01-01_
 
 # ---- A
 OUT="$WORK/a.out"
-if ! do_sync "$T1" "$SERVER" "$REMOTE" >"$OUT" 2>"$WORK/a.err"; then
-  if grep -q 'partial-dir' "$WORK/a.err"; then
-    echo "partial-dir rejected; retrying without it"
-    PARTIAL=(); PARTIAL_STATUS=rejected
-    do_sync "$T1" "$SERVER" "$REMOTE" >"$OUT" 2>"$WORK/a.err"
-  fi
+do_sync "$T1" "$SERVER" "$REMOTE" >"$OUT" 2>"$WORK/a.err"; A_RC=$?
+if [ $A_RC -ne 0 ] && grep -q 'partial-dir' "$WORK/a.err"; then
+  echo "partial-dir rejected; retrying without it"
+  PARTIAL=(); PARTIAL_STATUS=rejected
+  do_sync "$T1" "$SERVER" "$REMOTE" >"$OUT" 2>"$WORK/a.err"; A_RC=$?
 fi
-A_RC=$?
 if [ $A_RC -eq 0 ] \
   && rtest "test -f '$REMOTE/a.txt' && test -f '$REMOTE/sub/c.txt' && test -f '$REMOTE/Räksmörgås anteckning.txt' && test -f '$REMOTE/Mapp med mellanslag/d.txt' && ! test -e '$REMOTE/Raderat'"; then
   record A PASS
