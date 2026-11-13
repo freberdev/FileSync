@@ -83,7 +83,7 @@ public final class DiskSyncRunner: @unchecked Sendable {
         }
         // 24: filer försvann medan rsync listade. Varje listad sökväg kontrolleras ändå mot källan.
         guard listing.exitCode == 0 || listing.exitCode == 24 else {
-            return OutcomeClassifier.classify(exitCode: listing.exitCode, stderr: listing.stderr)
+            return localOutcome(exitCode: listing.exitCode, stderr: listing.stderr, volume: volume, disk: disk)
         }
 
         // 5. Samma disk på samma plats?
@@ -118,7 +118,7 @@ public final class DiskSyncRunner: @unchecked Sendable {
         let outcome: SyncOutcome
         do {
             let result = try await process.run(real.executable, real.arguments)
-            let classified = OutcomeClassifier.classify(exitCode: result.exitCode, stderr: result.stderr)
+            let classified = localOutcome(exitCode: result.exitCode, stderr: result.stderr, volume: volume, disk: disk)
             outcome = classified == .failed("Disken på servern är full") ? .failed("Disken är full") : classified
         } catch {
             log?("\(folder.path): kunde inte starta rsync: \(error)")
@@ -126,6 +126,18 @@ public final class DiskSyncRunner: @unchecked Sendable {
         }
         if outcome != .success, !isSameVolume(volume, disk: disk) { return .unreachable }
         return outcome
+    }
+
+    /// Som `OutcomeClassifier`, men "Broken pipe" och liknande betyder inte att disken är borta när
+    /// den sitter kvar på samma plats: då är det ett vanligt fel med rsyncs sista rad som text.
+    private func localOutcome(exitCode: Int32, stderr: String, volume: VolumeInfo, disk: DiskLocation) -> SyncOutcome {
+        let classified = OutcomeClassifier.classify(exitCode: exitCode, stderr: stderr)
+        guard classified == .unreachable, isSameVolume(volume, disk: disk) else { return classified }
+        let last = stderr.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .last { !$0.isEmpty }
+        guard let last else { return .failed("rsync avslutades med kod \(exitCode)") }
+        return .failed(String(last.prefix(200)))
     }
 
     /// rsync tar bort en post som byter typ (fil som blir mapp, mapp som blir fil, fil som blir länk)

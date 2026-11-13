@@ -570,6 +570,31 @@ struct DiskSyncRunnerTests {
         #expect(await s.sync(s.runner(process)) == .unreachable)
     }
 
+    @Test func brokenPipeOnAMountedDiskIsAFailureNotAMissingDisk() async throws {
+        let s = try Setup()
+        let real = ScriptedRsync([
+            ProcessResult(exitCode: 0, stdout: "", stderr: ""),
+            ProcessResult(exitCode: 12, stdout: "", stderr: "rsync: [sender] write error: Broken pipe (32)\n"),
+        ])
+        let afterRealRun = await s.sync(s.runner(real))
+        #expect(afterRealRun == .failed("rsync: [sender] write error: Broken pipe (32)"))
+        let dry = ScriptedRsync([
+            ProcessResult(exitCode: 12, stdout: "", stderr: "rsync: read error: Connection reset by peer (54)\n"),
+        ])
+        let afterDryRun = await s.sync(s.runner(dry))
+        #expect(afterDryRun == .failed("rsync: read error: Connection reset by peer (54)"))
+        #expect(dry.calls.count == 1)
+    }
+
+    @Test func brokenPipeWithTheDiskGoneIsUnreachable() async throws {
+        let s = try Setup()
+        let process = ScriptedRsync([
+            ProcessResult(exitCode: 12, stdout: "", stderr: "rsync: write error: Broken pipe (32)\n"),
+        ])
+        process.onRun = { [volumes = s.volumes] _, _ in volumes.volumes = [] }
+        #expect(await s.sync(s.runner(process)) == .unreachable)
+    }
+
     @Test func dryRunExitingWith24StillMovesAndSyncs() async throws {
         let s = try Setup()
         try s.write(s.destination, "borta.txt", "borta")
