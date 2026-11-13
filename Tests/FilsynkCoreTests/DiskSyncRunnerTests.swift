@@ -2,9 +2,15 @@ import Foundation
 import Testing
 @testable import FilsynkCore
 
+/// En lista över monterade volymer som testet ändrar, och monteringshändelserna. Händelserna
+/// levereras i tur och ordning från en egen kö, som systemets.
 final class FakeVolumes: VolumeMonitoring, @unchecked Sendable {
     private let lock = NSLock()
     private var list: [VolumeInfo]
+    private var onMount: (@Sendable (VolumeInfo) -> Void)?
+    private var onWillUnmount: (@Sendable (VolumeInfo) -> Void)?
+    private var onUnmount: (@Sendable (String) -> Void)?
+    private let queue = DispatchQueue(label: "fake-volumes")
 
     init(_ volumes: [VolumeInfo] = []) { list = volumes }
 
@@ -26,8 +32,35 @@ final class FakeVolumes: VolumeMonitoring, @unchecked Sendable {
     }
     func start(onMount: @escaping @Sendable (VolumeInfo) -> Void,
                onWillUnmount: @escaping @Sendable (VolumeInfo) -> Void,
-               onUnmount: @escaping @Sendable (String) -> Void) {}
-    func stop() {}
+               onUnmount: @escaping @Sendable (String) -> Void) {
+        lock.withLock {
+            self.onMount = onMount
+            self.onWillUnmount = onWillUnmount
+            self.onUnmount = onUnmount
+        }
+    }
+
+    func stop() {
+        lock.withLock { onMount = nil; onWillUnmount = nil; onUnmount = nil }
+    }
+
+    var isStarted: Bool { lock.withLock { onMount != nil } }
+
+    func mount(_ volume: VolumeInfo) {
+        let callback = lock.withLock { list.append(volume); return onMount }
+        queue.async { callback?(volume) }
+    }
+
+    /// Volymen är fortfarande monterad när det här levereras.
+    func willUnmount(_ volume: VolumeInfo) {
+        let callback = lock.withLock { onWillUnmount }
+        queue.async { callback?(volume) }
+    }
+
+    func unmount(path: String) {
+        let callback = lock.withLock { list.removeAll { $0.mountPath == path }; return onUnmount }
+        queue.async { callback?(path) }
+    }
 }
 
 /// Kör riktig rsync men låter testet gripa in efter att en körning börjat eller slutat.

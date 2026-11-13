@@ -115,4 +115,20 @@ import Testing
         #expect(stale.title == "Filsynk: osynkade ändringar")
         #expect(stale.body == "~/Sync har inte kunnat säkerhetskopieras på över ett dygn.")
     }
+
+    @Test func noStaleNoticeForDiskDestination() {
+        var policy = NoticePolicy()
+        var schedule = makeSchedule()
+        schedule.changeDetected(at: t0)
+        let later = t0.addingTimeInterval(2 * 24 * 3600)
+        #expect(policy.evaluate(folder: "~/Sync → HDD: Filsynk/Sync", schedule: schedule, now: later, allowStale: false) == [])
+        // Other notices still apply.
+        finishSync(&schedule, .failed("x"), at: later)
+        finishSync(&schedule, .failed("x"), at: later)
+        finishSync(&schedule, .failed("x"), at: later)
+        #expect(policy.evaluate(folder: "~/Sync → HDD: Filsynk/Sync", schedule: schedule, now: later, allowStale: false)
+            == [.repeatedFailure(folder: "~/Sync → HDD: Filsynk/Sync", message: "x")])
+        #expect(policy.evaluate(folder: "~/Sync → Server: ~/Sync", schedule: schedule, now: later, allowStale: true)
+            .contains(.stale(folder: "~/Sync → Server: ~/Sync")))
+    }
 }

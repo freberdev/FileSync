@@ -10,6 +10,8 @@ import Testing
 private actor FakeRunner: SyncRunning {
     private(set) var calls: [(path: String, destinationID: String, at: Date)] = []
     private(set) var cancelled: [String] = []
+    /// Destination keys of the cancelled syncs.
+    private(set) var cancelledKeys: [String] = []
     /// Per destination key.
     private(set) var maxConcurrent: [String: Int] = [:]
     private(set) var maxTotalConcurrent = 0
@@ -48,6 +50,7 @@ private actor FakeRunner: SyncRunning {
             try? await Task.sleep(for: .seconds(delay))
             if Task.isCancelled {
                 cancelled.append(path)
+                cancelledKeys.append(key)
                 // Like a terminated rsync, ending takes a moment (not itself cancellable).
                 await Task.detached { try? await Task.sleep(for: .milliseconds(50)) }.value
                 // Like the real runner: a terminated rsync is an ordinary failure.
@@ -170,7 +173,11 @@ private final class Recorder: @unchecked Sendable {
     var latest: EngineStatus? { statuses.last }
 
     func state(of path: String, _ destinationID: String = "server") -> FolderState? {
-        latest?.folders.first { $0.path == path && $0.destinationID == destinationID }?.state
+        row(of: path, destinationID)?.state
+    }
+
+    func row(of path: String, _ destinationID: String = "server") -> FolderStatus? {
+        latest?.folders.first { $0.path == path && $0.destinationID == destinationID }
     }
 }
 
@@ -209,27 +216,34 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
     static let diskA = Destination.disk(DiskLocation(volumeUUID: "U1", volumeName: "HDD", path: "Filsynk/A"))
     /// Folder A on the server and on a disk.
     static let bothA = FolderConfig(path: pathA, destinations: [.server(path: "/srv/A"), diskA])
+    /// The volume of `diskA`.
+    static let volumeU1 = VolumeInfo(uuid: "U1", name: "HDD", mountPath: "/filsynk-test/mnt/HDD", format: .exfat, isSystem: false)
 
     fileprivate struct Harness {
         let engine: SyncEngine
         let runner: FakeRunner
         let watchers: FakeWatchers
         let network: FakeNetwork
+        let volumes: FakeVolumes
         let recorder: Recorder
     }
 
+    /// The volume of `diskA` is mounted unless `volumes` says otherwise.
     fileprivate static func make(
         _ config: Config, timing: EngineTiming = timing,
-        runner: FakeRunner = FakeRunner(), network: FakeNetwork = FakeNetwork()
+        runner: FakeRunner = FakeRunner(), network: FakeNetwork = FakeNetwork(),
+        volumes: FakeVolumes = FakeVolumes([volumeU1]), state: StateStore? = nil
     ) -> Harness {
         let watchers = FakeWatchers()
         let recorder = Recorder()
         let engine = SyncEngine(
             config: config, timing: timing, runner: runner,
             makeWatcher: watchers.factory, network: network,
+            volumes: volumes, state: state,
             onStatus: { recorder.record($0) },
             onNotice: { recorder.record($0) })
-        return Harness(engine: engine, runner: runner, watchers: watchers, network: network, recorder: recorder)
+        return Harness(
+            engine: engine, runner: runner, watchers: watchers, network: network, volumes: volumes, recorder: recorder)
     }
 
     @Test func startSyncsEveryReadyFolderOnce() async {
@@ -857,6 +871,265 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
         #expect(await eventually { h.recorder.notices.contains(expected) })
         await settle()
         #expect(h.recorder.notices == [expected])
+        await h.engine.stop()
+    }
+    // MARK: Volumes
+
+    /// Long quiet period and backoff: only an explicit request explains a sync.
+    static let slow = EngineTiming(quiet: 30, maxWait: 60, backoff: [60], noticeCheckInterval: 0.05)
+    static let diskOnlyA = FolderConfig(path: pathA, destinations: [diskA])
+    static func diskOnly(_ folders: [FolderConfig]) -> Config {
+        Config(server: "", folders: folders)
+    }
+
+    @Test func startsWithDiskAbsentAndReportsNotConnected() async {
+        let h = Self.make(Self.config([Self.bothA]), volumes: FakeVolumes())
+        await h.engine.start()
+        #expect(await eventually { await h.runner.callCount(Self.pathA, "server") == 1 })
+        #expect(await eventually { h.recorder.state(of: Self.pathA, Self.diskA.id) == .notConnected })
+        await settle()
+        #expect(await h.runner.callCount(Self.pathA, Self.diskA.id) == 0)
+        #expect(h.recorder.state(of: Self.pathA, Self.diskA.id) == .notConnected)
+        #expect(h.recorder.notices.isEmpty)
+        #expect(h.volumes.isStarted)
+        await h.engine.stop()
+        #expect(!h.volumes.isStarted)
+    }
+
+    @Test func mountingTheChosenVolumeSyncsAtOnce() async {
+        let h = Self.make(Self.config([Self.bothA]), timing: Self.slow)
+        await h.engine.start()
+        #expect(await eventually {
+            h.recorder.state(of: Self.pathA) == .synced && h.recorder.state(of: Self.pathA, Self.diskA.id) == .synced
+        })
+        h.volumes.willUnmount(Self.volumeU1)
+        h.volumes.unmount(path: Self.volumeU1.mountPath)
+        #expect(await eventually { h.recorder.state(of: Self.pathA, Self.diskA.id) == .notConnected })
+        #expect(await h.engine.schedule(of: Self.pathA, destinationID: Self.diskA.id)?.isDirty == false)
+
+        // Nothing has changed, yet the disk is synced as soon as it is back.
+        h.volumes.mount(Self.volumeU1)
+        #expect(await eventually { await h.runner.callCount(Self.pathA, Self.diskA.id) == 2 })
+        #expect(await eventually { h.recorder.state(of: Self.pathA, Self.diskA.id) == .synced })
+        await settle()
+        #expect(await h.runner.callCount(Self.pathA, "server") == 1)
+        #expect(await h.runner.callCount(Self.pathA, Self.diskA.id) == 2)
+        await h.engine.stop()
+    }
+
+    @Test func mountingAnotherVolumeDoesNothing() async {
+        let other = VolumeInfo(uuid: "U2", name: "HDD", mountPath: "/filsynk-test/mnt/HDD 1", format: .exfat, isSystem: false)
+
+        // The disk is absent: a disk with the same name is not it.
+        let absent = Self.make(Self.config([Self.bothA]), timing: Self.slow, volumes: FakeVolumes())
+        await absent.engine.start()
+        #expect(await eventually { absent.recorder.state(of: Self.pathA) == .synced })
+        absent.volumes.mount(other)
+        await settle()
+        #expect(await absent.runner.callCount(Self.pathA, Self.diskA.id) == 0)
+        #expect(await absent.runner.callCount(Self.pathA, "server") == 1)
+        #expect(absent.recorder.state(of: Self.pathA, Self.diskA.id) == .notConnected)
+        await absent.engine.stop()
+
+        // The disk is present: another disk being mounted starts nothing.
+        let present = Self.make(Self.config([Self.bothA]), timing: Self.slow)
+        await present.engine.start()
+        #expect(await eventually { present.recorder.state(of: Self.pathA, Self.diskA.id) == .synced })
+        present.volumes.mount(other)
+        await settle()
+        #expect(await present.runner.callCount(Self.pathA, Self.diskA.id) == 1)
+        #expect(await present.runner.callCount(Self.pathA, "server") == 1)
+        #expect(present.recorder.state(of: Self.pathA, Self.diskA.id) == .synced)
+        await present.engine.stop()
+    }
+
+    @Test func changesWhileAbsentAreSyncedOnMount() async {
+        let h = Self.make(Self.config([Self.bothA]))
+        await h.engine.start()
+        #expect(await eventually {
+            h.recorder.state(of: Self.pathA) == .synced && h.recorder.state(of: Self.pathA, Self.diskA.id) == .synced
+        })
+        h.volumes.willUnmount(Self.volumeU1)
+        h.volumes.unmount(path: Self.volumeU1.mountPath)
+        #expect(await eventually { h.recorder.state(of: Self.pathA, Self.diskA.id) == .notConnected })
+
+        h.watchers.trigger(Self.pathA)
+        #expect(await eventually { await h.runner.callCount(Self.pathA, "server") == 2 })
+        await settle(0.8)  // beyond maxWait (0.5)
+        #expect(await h.runner.callCount(Self.pathA, Self.diskA.id) == 1)
+        #expect(await h.engine.schedule(of: Self.pathA, destinationID: Self.diskA.id)?.isDirty == true)
+        #expect(h.recorder.state(of: Self.pathA, Self.diskA.id) == .notConnected)
+
+        h.volumes.mount(Self.volumeU1)
+        #expect(await eventually { await h.runner.callCount(Self.pathA, Self.diskA.id) == 2 })
+        #expect(await eventually { h.recorder.state(of: Self.pathA, Self.diskA.id) == .synced })
+        await h.engine.stop()
+    }
+
+    @Test func willUnmountCancelsRunningDiskSync() async {
+        let runner = FakeRunner(delay: 30)
+        let h = Self.make(Self.diskOnly([Self.diskOnlyA]), runner: runner)
+        await h.engine.start()
+        #expect(await eventually { await runner.callCount(Self.pathA, Self.diskA.id) == 1 })
+        #expect(await eventually { h.recorder.state(of: Self.pathA, Self.diskA.id) == .syncing })
+
+        h.volumes.willUnmount(Self.volumeU1)
+        #expect(await eventually { await runner.cancelledKeys == [FakeRunner.key(Self.pathA, Self.diskA.id)] })
+        h.volumes.unmount(path: Self.volumeU1.mountPath)
+        #expect(await eventually { h.recorder.state(of: Self.pathA, Self.diskA.id) == .notConnected })
+        await settle()
+        // The cancelled sync is discarded: no error, no notice, no retry; the change is still owed.
+        #expect(h.recorder.notices.isEmpty)
+        #expect(!h.recorder.statuses.contains { $0.folders.contains { if case .error = $0.state { true } else { false } } })
+        #expect(await runner.callCount(Self.pathA, Self.diskA.id) == 1)
+        #expect(await h.engine.schedule(of: Self.pathA, destinationID: Self.diskA.id)?.isDirty == true)
+        #expect(await h.engine.schedule(of: Self.pathA, destinationID: Self.diskA.id)?.failureCount == 0)
+        await h.engine.stop()
+    }
+
+    @Test func syncNowLeavesAbsentDiskAlone() async {
+        let h = Self.make(Self.config([Self.bothA]), timing: Self.slow, volumes: FakeVolumes())
+        await h.engine.start()
+        #expect(await eventually { await h.runner.callCount(Self.pathA, "server") == 1 })
+        await h.engine.setPaused(true)
+        await h.engine.syncNow()
+        #expect(await eventually { await h.runner.callCount(Self.pathA, "server") == 2 })
+        await settle()
+        #expect(await h.runner.callCount(Self.pathA, Self.diskA.id) == 0)
+        #expect(h.recorder.state(of: Self.pathA, Self.diskA.id) == .notConnected)
+
+        // Resuming does not start it either.
+        await h.engine.setPaused(false)
+        #expect(await eventually { await h.runner.callCount(Self.pathA, "server") == 3 })
+        await settle()
+        #expect(await h.runner.callCount(Self.pathA, Self.diskA.id) == 0)
+        await h.engine.stop()
+    }
+
+    @Test func absentDiskDoesNotChangeOverallState() async {
+        let h = Self.make(Self.config([Self.bothA]), volumes: FakeVolumes())
+        await h.engine.start()
+        #expect(await eventually { h.recorder.state(of: Self.pathA) == .synced })
+        #expect(h.recorder.state(of: Self.pathA, Self.diskA.id) == .notConnected)
+        #expect(h.recorder.latest?.overall == .synced)
+        await h.engine.stop()
+    }
+
+    @Test func onlyAbsentDisksGiveOverallNotConnected() async {
+        let h = Self.make(Self.diskOnly([Self.diskOnlyA]), volumes: FakeVolumes())
+        await h.engine.start()
+        await settle()
+        #expect(await h.runner.totalCalls == 0)
+        #expect(h.recorder.latest?.overall == .notConnected)
+
+        h.volumes.mount(Self.volumeU1)
+        #expect(await eventually { h.recorder.latest?.overall == .synced })
+        await h.engine.stop()
+    }
+
+    @Test func folderOnMissingSourceVolumeHoldsAllItsDestinations() async {
+        let source = VolumeInfo(uuid: "S1", name: "Data", mountPath: "/filsynk-test/mnt/Data", format: .apfs, isSystem: false)
+        var onData = Self.bothA
+        onData.sourceVolumeUUID = "S1"
+        let h = Self.make(Self.config([onData, Self.folderB]))
+        await h.engine.start()
+        #expect(await eventually { await h.runner.callCount(Self.pathB) == 1 })
+        #expect(await eventually {
+            h.recorder.state(of: Self.pathA) == .notConnected && h.recorder.state(of: Self.pathA, Self.diskA.id) == .notConnected
+        })
+        await h.engine.syncNow()
+        await settle()
+        #expect(await h.runner.callCount(Self.pathA) == 0)
+
+        h.volumes.mount(source)
+        #expect(await eventually {
+            let server = await h.runner.callCount(Self.pathA, "server")
+            let disk = await h.runner.callCount(Self.pathA, Self.diskA.id)
+            return server == 1 && disk == 1
+        })
+        #expect(await eventually {
+            h.recorder.state(of: Self.pathA) == .synced && h.recorder.state(of: Self.pathA, Self.diskA.id) == .synced
+        })
+        await h.engine.stop()
+    }
+
+    @Test func duplicateVolumesShowAnErrorRow() async {
+        var twin = Self.volumeU1
+        twin.mountPath = "/filsynk-test/mnt/HDD 1"
+        let h = Self.make(Self.config([Self.bothA]), volumes: FakeVolumes([Self.volumeU1, twin]))
+        await h.engine.start()
+        #expect(await eventually { h.recorder.state(of: Self.pathA) == .synced })
+        await h.engine.syncNow()
+        await settle()
+        #expect(await h.runner.callCount(Self.pathA, Self.diskA.id) == 0)
+        #expect(h.recorder.state(of: Self.pathA, Self.diskA.id) == .error("Två inkopplade diskar har samma id."))
+        #expect(h.recorder.notices.isEmpty)
+        await h.engine.stop()
+    }
+
+    @Test func lastSuccessIsRestoredAfterRestart() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("filsynk-state-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = StateStore(url: dir.appendingPathComponent("state.json"))
+
+        let first = Self.make(Self.config([Self.bothA]), state: store)
+        await first.engine.start()
+        #expect(await eventually {
+            first.recorder.state(of: Self.pathA) == .synced && first.recorder.state(of: Self.pathA, Self.diskA.id) == .synced
+        })
+        await first.engine.stop()
+        let disk = try #require(await first.engine.schedule(of: Self.pathA, destinationID: Self.diskA.id)?.lastSuccess)
+        let server = try #require(await first.engine.schedule(of: Self.pathA)?.lastSuccess)
+
+        // A new engine with the disk absent shows the dates before anything has synced.
+        let second = Self.make(Self.config([Self.bothA]), volumes: FakeVolumes(), state: store)
+        let row = try #require(second.recorder.row(of: Self.pathA, Self.diskA.id))
+        #expect(abs((row.lastSuccess ?? .distantPast).timeIntervalSince(disk)) < 0.01)
+        let serverRow = try #require(second.recorder.row(of: Self.pathA))
+        #expect(abs((serverRow.lastSuccess ?? .distantPast).timeIntervalSince(server)) < 0.01)
+        await second.engine.start()
+        #expect(await eventually { second.recorder.state(of: Self.pathA, Self.diskA.id) == .notConnected })
+        #expect(second.recorder.row(of: Self.pathA, Self.diskA.id)?.lastSuccess == row.lastSuccess)
+        await second.engine.stop()
+
+        // A destination that is gone is dropped at the next save.
+        let third = Self.make(Self.config([Self.folderA]), state: store)
+        await third.engine.start()
+        #expect(await eventually { third.recorder.state(of: Self.pathA) == .synced })
+        await third.engine.stop()
+        #expect(await eventually { store.load().keys.sorted() == [FakeRunner.key(Self.pathA)] })
+    }
+
+    @Test func networkChangeLeavesDirtyDiskDestinationAlone() async {
+        let timing = EngineTiming(quiet: 0.05, maxWait: 0.5, backoff: [60], noticeCheckInterval: 0.05)
+        let runner = FakeRunner()
+        await runner.setOutcomes([.failed("x")], for: Self.pathA, destinationID: Self.diskA.id)
+        let h = Self.make(Self.config([Self.bothA]), timing: timing, runner: runner)
+        await h.engine.start()
+        #expect(await eventually { h.recorder.state(of: Self.pathA, Self.diskA.id) == .error("x") })
+        #expect(await h.engine.schedule(of: Self.pathA, destinationID: Self.diskA.id)?.isDirty == true)
+
+        h.network.change()
+        await settle()
+        #expect(await runner.callCount(Self.pathA, Self.diskA.id) == 1)
+        await h.engine.stop()
+    }
+
+    @Test func runningDiskSyncSurvivesServerChangeOnReload() async {
+        let runner = FakeRunner(delay: 0.3)
+        let h = Self.make(Self.config([Self.bothA]), runner: runner)
+        await h.engine.start()
+        #expect(await eventually { await runner.currentTotal == 2 })
+
+        await h.engine.reload(Self.config([Self.bothA], server: "other@server"))
+        #expect(await eventually(timeout: 5) { await runner.cancelledKeys == [FakeRunner.key(Self.pathA)] })
+        #expect(await eventually(timeout: 5) { h.recorder.state(of: Self.pathA, Self.diskA.id) == .synced })
+        #expect(await h.engine.schedule(of: Self.pathA, destinationID: Self.diskA.id)?.lastSuccess != nil)
+        #expect(await eventually(timeout: 5) { h.recorder.state(of: Self.pathA) == .synced })
+        await settle()
+        #expect(await runner.cancelledKeys == [FakeRunner.key(Self.pathA)])
+        #expect(await runner.maxConcurrent[FakeRunner.key(Self.pathA, Self.diskA.id)] == 1)
+        #expect(h.recorder.notices.isEmpty)
         await h.engine.stop()
     }
 }

@@ -26,6 +26,9 @@ public struct EngineTiming: Equatable, Sendable {
 /// Watches the configured folders and syncs each of their destinations when its `FolderSchedule`
 /// says so. All scheduling decisions are the schedules'; the engine only feeds them events and runs
 /// syncs when `nextFireDate` has passed. One sleeping task wakes at the earliest fire date.
+///
+/// A destination on a disk, and every destination of a folder on a disk, waits while that disk is
+/// not connected and is synced as soon as it is mounted.
 public actor SyncEngine {
     /// A destination of a folder: its local path and `Destination.id`.
     private struct SlotKey: Hashable {
@@ -40,9 +43,34 @@ public actor SyncEngine {
         var schedule: FolderSchedule
         /// The schedule as it was before the running sync started; restored if that sync is cancelled.
         var scheduleBeforeSync: FolderSchedule?
+        /// The last success from an earlier launch, shown until this one has its own.
+        var savedSuccess: Date?
 
         var key: SlotKey { SlotKey(path: folder.path, destinationID: destination.id) }
+        var lastSuccess: Date? { schedule.lastSuccess ?? savedSuccess }
+
+        /// The ids of the volumes the destination needs: its disk and the volume of its folder.
+        var volumeIDs: [String] {
+            var ids: [String] = []
+            if let source = folder.sourceVolumeUUID, !source.isEmpty { ids.append(source) }
+            if case .disk(let location) = destination { ids.append(location.volumeUUID) }
+            return ids
+        }
+
+        func needs(volumeID id: String) -> Bool {
+            volumeIDs.contains { $0.caseInsensitiveCompare(id) == .orderedSame }
+        }
     }
+
+    /// Why a destination cannot run because of its volumes.
+    private enum VolumeHold {
+        /// A volume it needs is not mounted.
+        case absent
+        /// Two mounted volumes have the id of one it needs.
+        case duplicate
+    }
+
+    private static let duplicateMessage = "Två inkopplade diskar har samma id."
 
     /// A running sync, keyed by destination. Kept until its task has ended, also after the
     /// engine cancelled it, so that a destination never has two syncs at once.
@@ -59,6 +87,8 @@ public actor SyncEngine {
     private let runner: any SyncRunning
     private let makeWatcher: WatcherFactory
     private let network: any NetworkMonitoring
+    private let volumes: any VolumeMonitoring
+    private let state: StateStore?
     private let onStatus: @Sendable (EngineStatus) -> Void
     private let onNotice: @Sendable (Notice) -> Void
 
@@ -73,6 +103,8 @@ public actor SyncEngine {
     private var isPaused = false
     /// False from `start()` until the first network update of that start; unknown counts as metered.
     private var isNetworkKnown = false
+    /// The mounted volumes as last read; refreshed on start, reload and every mount event.
+    private var mounted: [VolumeInfo]
     /// Changes on every start/stop; callbacks carrying an older value are ignored.
     private var generation = 0
     private var nextSyncID = 0
@@ -80,36 +112,49 @@ public actor SyncEngine {
     private var noticeTask: Task<Void, Never>?
     private var published: EngineStatus
 
+    /// `state` keeps the last success of every destination between launches; nil keeps nothing.
     public init(
         config: Config, timing: EngineTiming? = nil, runner: any SyncRunning,
         makeWatcher: @escaping WatcherFactory, network: any NetworkMonitoring,
+        volumes: any VolumeMonitoring, state: StateStore? = nil,
         onStatus: @escaping @Sendable (EngineStatus) -> Void,
         onNotice: @escaping @Sendable (Notice) -> Void
     ) {
         let effectiveTiming = timing ?? EngineTiming(config: config)
-        let slots = Self.makeSlots(config: config, timing: effectiveTiming)
+        var slots = Self.makeSlots(config: config, timing: effectiveTiming)
+        let saved = state?.load() ?? [:]
+        for index in slots.indices {
+            let key = slots[index].key
+            slots[index].savedSuccess = saved[StateStore.key(path: key.path, destinationID: key.destinationID)]
+        }
+        let mounted = volumes.mountedVolumes()
         self.config = config
         self.fixedTiming = timing
         self.timing = effectiveTiming
         self.runner = runner
         self.makeWatcher = makeWatcher
         self.network = network
+        self.volumes = volumes
+        self.state = state
         self.onStatus = onStatus
         self.onNotice = onNotice
         self.slots = slots
-        self.published = Self.status(config: config, slots: slots, isPaused: false)
+        self.mounted = mounted
+        self.published = Self.status(config: config, slots: slots, isPaused: false, mounted: mounted)
         onStatus(published)
     }
 
     // MARK: Public API
 
-    /// Starts watching and requests an immediate sync of every participating destination.
+    /// Starts watching and requests an immediate sync of every participating destination whose
+    /// volumes are connected.
     public func start() {
         guard !isRunning else { return }
         isRunning = true
         isNetworkKnown = false
         generation += 1
         let generation = self.generation
+        mounted = volumes.mountedVolumes()
         let now = Date()
         for index in slots.indices where slots[index].participates {
             let path = slots[index].folder.path
@@ -120,11 +165,23 @@ public actor SyncEngine {
                 watchers[path] = watcher
                 watcher.start()
             }
-            slots[index].schedule.requestImmediate(at: now)
+            if volumeHold(index) == nil {
+                slots[index].schedule.requestImmediate(at: now)
+            }
         }
         network.start { [weak self] in
             Task { await self?.networkChanged(generation: generation) }
         }
+        volumes.start(
+            onMount: { [weak self] volume in
+                Task { await self?.volumeMounted(volume, generation: generation) }
+            },
+            onWillUnmount: { [weak self] volume in
+                Task { await self?.volumeWillUnmount(volume, generation: generation) }
+            },
+            onUnmount: { [weak self] _ in
+                Task { await self?.volumeUnmounted(generation: generation) }
+            })
         startNoticeChecks(generation: generation)
         runDue()
     }
@@ -142,21 +199,28 @@ public actor SyncEngine {
         for watcher in watchers.values { watcher.stop() }
         watchers.removeAll()
         network.stop()
+        volumes.stop()
         wakeTask?.cancel()
         wakeTask = nil
         noticeTask?.cancel()
         noticeTask = nil
         forced.removeAll()
         for key in Array(inFlight.keys) where inFlight[key]?.discarded == false && !kept.contains(key) {
-            inFlight[key]?.task.cancel()
-            inFlight[key]?.discarded = true
-            if let index = slots.firstIndex(where: { $0.key == key }),
-               let before = slots[index].scheduleBeforeSync {
-                slots[index].schedule = before
-                slots[index].scheduleBeforeSync = nil
-            }
+            discardSync(of: key)
         }
         publishIfChanged()
+    }
+
+    /// Cancels the running sync of a destination. Its outcome will be ignored, and the schedule is
+    /// put back as it was before the sync started, so the work it was doing is still owed.
+    private func discardSync(of key: SlotKey) {
+        inFlight[key]?.task.cancel()
+        inFlight[key]?.discarded = true
+        if let index = slots.firstIndex(where: { $0.key == key }),
+           let before = slots[index].scheduleBeforeSync {
+            slots[index].schedule = before
+            slots[index].scheduleBeforeSync = nil
+        }
     }
 
     /// Stops, replaces the configuration and starts again if the engine was running.
@@ -186,6 +250,12 @@ public actor SyncEngine {
 
         stop(keepingSyncsOf: kept)
         for index in newSlots.indices {
+            let slot = newSlots[index]
+            let same = slots.first {
+                $0.key == slot.key && $0.destination == slot.destination
+                    && $0.folder.sourceVolumeUUID == slot.folder.sourceVolumeUUID && (!slot.destination.isServer || sameServer)
+            }
+            newSlots[index].savedSuccess = same?.lastSuccess
             guard let old = previous(newSlots[index]) else { continue }
             newSlots[index].schedule = old.schedule.retimed(
                 quiet: newTiming.quiet, maxWait: newTiming.maxWait, backoff: newTiming.backoff)
@@ -195,7 +265,12 @@ public actor SyncEngine {
         self.config = config
         timing = newTiming
         slots = newSlots
-        if wasRunning { start() } else { publishIfChanged() }
+        if wasRunning {
+            start()
+        } else {
+            mounted = volumes.mountedVolumes()
+            publishIfChanged()
+        }
     }
 
     /// The configuration a running sync was started with is still the one it would be started with now.
@@ -212,13 +287,14 @@ public actor SyncEngine {
         slots.first { $0.key == SlotKey(path: path, destinationID: destinationID) }?.schedule
     }
 
-    /// Pausing holds automatic syncs; resuming requests an immediate sync of every participating destination.
+    /// Pausing holds automatic syncs; resuming requests an immediate sync of every participating
+    /// destination whose volumes are connected.
     public func setPaused(_ paused: Bool) {
         guard paused != isPaused else { return }
         isPaused = paused
         if !paused, isRunning {
             let now = Date()
-            for index in slots.indices where slots[index].participates {
+            for index in slots.indices where slots[index].participates && volumeHold(index) == nil {
                 slots[index].schedule.requestImmediate(at: now)
             }
         }
@@ -226,10 +302,11 @@ public actor SyncEngine {
     }
 
     /// Immediate sync of every participating destination, also when paused or on a metered network.
+    /// A destination whose volumes are not connected is left alone.
     public func syncNow() {
         guard isRunning else { return }
         let now = Date()
-        for index in slots.indices where slots[index].participates {
+        for index in slots.indices where slots[index].participates && volumeHold(index) == nil {
             slots[index].schedule.requestImmediate(at: now)
             forced.insert(slots[index].key)
         }
@@ -260,6 +337,40 @@ public actor SyncEngine {
         runDue()
     }
 
+    /// A volume was mounted: every destination that needs it is synced now, changed or not.
+    private func volumeMounted(_ volume: VolumeInfo, generation: Int) {
+        guard isRunning, generation == self.generation else { return }
+        mounted = volumes.mountedVolumes()
+        if let id = volume.uuid, !id.isEmpty {
+            let now = Date()
+            for index in slots.indices where slots[index].participates && slots[index].needs(volumeID: id) {
+                slots[index].schedule.requestImmediate(at: now)
+            }
+        }
+        runDue()
+    }
+
+    /// A volume is about to go: the syncs that need it are cancelled and discarded, and the volume
+    /// counts as gone from now on, so that nothing starts on it before it has been unmounted.
+    private func volumeWillUnmount(_ volume: VolumeInfo, generation: Int) {
+        guard isRunning, generation == self.generation else { return }
+        let leaving = mounted.filter { $0.mountPath == volume.mountPath } + [volume]
+        let ids = leaving.compactMap(\.uuid).filter { !$0.isEmpty }
+        for key in Array(inFlight.keys) where inFlight[key]?.discarded == false {
+            guard let slot = slots.first(where: { $0.key == key }),
+                  ids.contains(where: { slot.needs(volumeID: $0) }) else { continue }
+            discardSync(of: key)
+        }
+        mounted.removeAll { $0.mountPath == volume.mountPath }
+        runDue()
+    }
+
+    private func volumeUnmounted(generation: Int) {
+        guard isRunning, generation == self.generation else { return }
+        mounted = volumes.mountedVolumes()
+        runDue()
+    }
+
     private func syncEnded(key: SlotKey, id: Int, outcome: SyncOutcome) {
         guard let running = inFlight[key], running.id == id else { return }
         inFlight[key] = nil
@@ -268,6 +379,12 @@ public actor SyncEngine {
             let now = Date()
             slots[index].schedule.syncFinished(outcome, at: now)
             slots[index].scheduleBeforeSync = nil
+            // A volume that vanished without notice: once it is known to be gone, the destination
+            // waits for it instead of retrying.
+            if outcome == .unreachable, !slots[index].volumeIDs.isEmpty {
+                mounted = volumes.mountedVolumes()
+            }
+            if outcome == .success { saveState() }
             emitNotices(for: index, now: now)
         }
         runDue()
@@ -285,8 +402,26 @@ public actor SyncEngine {
 
     /// Automatic syncs are held while paused. Those to the server are also held on a metered
     /// network, or before the first network update since `start()` (the network state is not known yet).
+    /// `syncNow` overrides these holds; it does not override `volumeHold`.
     private func isHeld(_ index: Int) -> Bool {
         isPaused || (slots[index].destination.isServer && (!isNetworkKnown || network.isMetered))
+    }
+
+    /// A destination is never started while a volume it needs is missing or ambiguous.
+    private func volumeHold(_ index: Int) -> VolumeHold? {
+        Self.volumeHold(slots[index], mounted: mounted)
+    }
+
+    private static func volumeHold(_ slot: Slot, mounted: [VolumeInfo]) -> VolumeHold? {
+        var hold: VolumeHold?
+        for id in slot.volumeIDs {
+            switch VolumeLookup.find(uuid: id, in: mounted) {
+            case .failure(.notMounted): return .absent
+            case .failure(.duplicate): hold = .duplicate
+            case .success: break
+            }
+        }
+        return hold
     }
 
     /// Starts every destination whose fire date has passed, then sleeps until the next one.
@@ -305,7 +440,8 @@ public actor SyncEngine {
 
     private func canFire(_ index: Int) -> Bool {
         let key = slots[index].key
-        return slots[index].participates && inFlight[key] == nil && (forced.contains(key) || !isHeld(index))
+        return slots[index].participates && inFlight[key] == nil && volumeHold(index) == nil
+            && (forced.contains(key) || !isHeld(index))
     }
 
     private func scheduleWake() {
@@ -356,18 +492,33 @@ public actor SyncEngine {
 
     // MARK: Output
 
+    /// Nothing is said about a destination that waits for its volume. The notice about changes
+    /// waiting for a day is only given for the server: a disk may well be away for longer.
     private func emitNotices(for index: Int, now: Date) {
+        guard volumeHold(index) == nil else { return }
         let slot = slots[index]
         let name = StatusPresentation.displayPath(slot.folder.path, home: NSHomeDirectory()) + " → "
             + StatusPresentation.destinationLabel(slot.destination, serverHome: config.verifiedHome)
         var policy = noticePolicies[slot.key] ?? NoticePolicy()
-        let notices = policy.evaluate(folder: name, schedule: slot.schedule, now: now)
+        let notices = policy.evaluate(folder: name, schedule: slot.schedule, now: now, allowStale: slot.destination.isServer)
         noticePolicies[slot.key] = policy
         for notice in notices { onNotice(notice) }
     }
 
+    /// The last success of every destination there is now; destinations that are gone are dropped.
+    private func saveState() {
+        guard let state else { return }
+        var saved: [String: Date] = [:]
+        for slot in slots {
+            if let date = slot.lastSuccess {
+                saved[StateStore.key(path: slot.key.path, destinationID: slot.key.destinationID)] = date
+            }
+        }
+        state.save(saved)
+    }
+
     private func publishIfChanged() {
-        let status = Self.status(config: config, slots: slots, isPaused: isPaused)
+        let status = Self.status(config: config, slots: slots, isPaused: isPaused, mounted: mounted)
         guard status != published else { return }
         published = status
         onStatus(status)
@@ -375,7 +526,7 @@ public actor SyncEngine {
 
     /// One row per destination, in the order of the folders and their destinations. A folder
     /// without destinations gets one row that is not configured.
-    private static func status(config: Config, slots: [Slot], isPaused: Bool) -> EngineStatus {
+    private static func status(config: Config, slots: [Slot], isPaused: Bool, mounted: [VolumeInfo]) -> EngineStatus {
         // `slots` holds the destinations of `config.folders` in order (see `makeSlots`).
         var rows: [FolderStatus] = []
         var rest = slots[...]
@@ -387,12 +538,25 @@ public actor SyncEngine {
                 rows.append(FolderStatus(
                     path: slot.folder.path,
                     destination: slot.destination,
-                    state: StatusPresentation.folderState(ready: slot.participates, schedule: slot.schedule),
-                    lastSuccess: slot.schedule.lastSuccess))
+                    state: state(of: slot, mounted: mounted),
+                    lastSuccess: slot.lastSuccess))
             }
             rest = rest.dropFirst(folder.destinations.count)
         }
         return EngineStatus(folders: rows, isPaused: isPaused, configError: nil)
+    }
+
+    private static func state(of slot: Slot, mounted: [VolumeInfo]) -> FolderState {
+        guard slot.participates else { return .notConfigured }
+        switch volumeHold(slot, mounted: mounted) {
+        case .absent?: return .notConnected
+        case .duplicate?: return .error(duplicateMessage)
+        case nil: break
+        }
+        let state = StatusPresentation.folderState(ready: true, schedule: slot.schedule)
+        // A disk that could not be reached is not connected, whatever the volume list said.
+        if state == .waitingForServer, !slot.destination.isServer { return .notConnected }
+        return state
     }
 
     /// A server destination takes part when the configuration is valid, the server verified and

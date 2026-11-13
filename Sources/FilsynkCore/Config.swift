@@ -209,6 +209,18 @@ public struct Config: Codable, Equatable, Sendable {
         Config(folders: [FolderConfig(path: home + "/Sync", remotePath: "~/Sync")])
     }
 
+    /// Records the volume of every folder that has none recorded and now lies on a mounted volume
+    /// other than the system disk. Folders that already have one are left as they are.
+    public func recordingSourceVolumes(_ volumes: [VolumeInfo]) -> Config {
+        var result = self
+        for index in result.folders.indices where result.folders[index].sourceVolumeUUID == nil {
+            guard let volume = VolumeLookup.volume(containing: result.folders[index].path, in: volumes),
+                  !volume.isSystem, let id = volume.uuid, !id.isEmpty else { continue }
+            result.folders[index].sourceVolumeUUID = id
+        }
+        return result
+    }
+
     /// Splits a comma-separated field into patterns: whitespace trimmed, empty entries dropped.
     public static func parseExcludes(_ text: String) -> [String] {
         text.split(separator: ",", omittingEmptySubsequences: true)

@@ -161,4 +161,43 @@ import Testing
         #expect(onDisk.id == "/a|" + disk.id)
         #expect(server.destinationID == "server")
     }
+
+    @Test func notConnectedLabels() {
+        let disk = Destination.disk(.init(volumeUUID: "U1", volumeName: "HDD", path: "Filsynk/A"))
+        // 2024-10-04 23:30 UTC is already 2024-10-05 in UTC+2.
+        let late = utcTime(hour: 23, minute: 30)
+        let seen = FolderStatus(path: "/a", destination: disk, state: .notConnected, lastSuccess: late)
+        #expect(StatusPresentation.folderLabel(seen, timeZone: utc) == "Inte inkopplad · senast 2024-10-04")
+        #expect(StatusPresentation.folderLabel(seen, timeZone: TimeZone(secondsFromGMT: 7200)!) == "Inte inkopplad · senast 2024-10-05")
+        let never = FolderStatus(path: "/a", destination: disk, state: .notConnected, lastSuccess: nil)
+        #expect(StatusPresentation.folderLabel(never, timeZone: utc) == "Inte inkopplad · aldrig synkad")
+    }
+
+    @Test func notConnectedHeadlineAndSymbol() {
+        let disk = Destination.disk(.init(volumeUUID: "U1", volumeName: "HDD", path: "Filsynk/A"))
+        func row(_ state: FolderState, _ destination: Destination? = nil, last: Date? = nil) -> FolderStatus {
+            FolderStatus(path: "/a", destination: destination ?? disk, state: state, lastSuccess: last)
+        }
+        let absent = EngineStatus(folders: [row(.notConnected), row(.notConnected)], isPaused: false, configError: nil)
+        #expect(absent.overall == .notConnected)
+        #expect(StatusPresentation.headline(absent, timeZone: utc) == "Disken är inte inkopplad")
+        #expect(StatusPresentation.symbolName(.notConnected) == "externaldrive.badge.xmark")
+
+        // Rows that are not connected are left out when anything else takes part.
+        let at1432 = utcTime(hour: 14, minute: 32)
+        let mixed = EngineStatus(folders: [row(.synced, .server(path: "/srv/a"), last: at1432), row(.notConnected)],
+                                 isPaused: false, configError: nil)
+        #expect(mixed.overall == .synced)
+        #expect(StatusPresentation.headline(mixed, timeZone: utc) == "Allt synkat · 14:32")
+        var pending = mixed
+        pending.folders[0].state = .pending
+        #expect(pending.overall == .pending)
+        var paused = absent
+        paused.isPaused = true
+        #expect(paused.overall == .paused)
+        // A folder that is not set up still decides.
+        let unset = EngineStatus(folders: [row(.notConfigured, .server(path: "~/a")), row(.notConnected)],
+                                 isPaused: false, configError: nil)
+        #expect(unset.overall == .notConfigured)
+    }
 }

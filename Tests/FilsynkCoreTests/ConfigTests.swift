@@ -251,4 +251,25 @@ extension ConfigTests {
             #expect(c.validate(home: "/Users/x") == [], "\(good)")
         }
     }
+
+    @Test func recordsSourceVolumeOnlyForFoldersOnOtherVolumes() {
+        let volumes = [
+            VolumeInfo(uuid: "SYS", name: "Macintosh HD", mountPath: "/", format: .apfs, isSystem: true),
+            VolumeInfo(uuid: "D1", name: "Data", mountPath: "/Volumes/Data", format: .apfs, isSystem: false),
+            VolumeInfo(uuid: "D2", name: "Other", mountPath: "/Volumes/Other", format: .apfs, isSystem: false),
+        ]
+        let home = FolderConfig(path: "/Users/x/Sync", remotePath: "/srv/a")
+        let onData = FolderConfig(path: "/Volumes/Data/Photos", remotePath: "/srv/b")
+        let alreadySet = FolderConfig(path: "/Volumes/Other/Docs", destinations: [.server(path: "/srv/c")], sourceVolumeUUID: "OLD")
+        let absent = FolderConfig(path: "/Volumes/Gone/Docs", remotePath: "/srv/d")
+        let config = Config(folders: [home, onData, alreadySet, absent])
+
+        let recorded = config.recordingSourceVolumes(volumes)
+        #expect(recorded.folders.map(\.sourceVolumeUUID) == [nil, "D1", "OLD", nil])
+        #expect(recorded.folders.map(\.path) == config.folders.map(\.path))
+        #expect(recorded.folders.map(\.destinations) == config.folders.map(\.destinations))
+        // Nothing to record: unchanged.
+        #expect(recorded.recordingSourceVolumes(volumes) == recorded)
+        #expect(Config(folders: [home]).recordingSourceVolumes(volumes) == Config(folders: [home]))
+    }
 }

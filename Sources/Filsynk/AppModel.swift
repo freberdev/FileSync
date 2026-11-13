@@ -43,7 +43,9 @@ struct PendingFolder: Equatable {
     @ObservationIgnored private let log: FileLog
     @ObservationIgnored private let notifier: Notifier
     @ObservationIgnored private let flow: SetupFlow
+    /// The one volume monitor of the app; the disk runner and the engine share it.
     @ObservationIgnored private let volumes = SystemVolumeMonitor()
+    @ObservationIgnored private var mountObserver: NSObjectProtocol?
 
     init(store: ConfigStore = ConfigStore(url: ConfigStore.defaultURL), log: FileLog = FileLog(url: FileLog.defaultURL)) {
         self.store = store
@@ -73,6 +75,12 @@ struct PendingFolder: Equatable {
             configError = "Konfigurationsfilen kan inte läsas"
             publish()
             return
+        }
+        recordSourceVolumes()
+        mountObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didMountNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.recordSourceVolumes() }
         }
         makeEngine()
         if firstStart {
@@ -235,6 +243,15 @@ struct PendingFolder: Equatable {
         }
     }
 
+    /// Remembers the volume of every folder that lies on a disk other than the system disk, so
+    /// that the folder waits for that disk instead of syncing an empty mount point.
+    private func recordSourceVolumes() {
+        guard canSave else { return }
+        let updated = config.recordingSourceVolumes(volumes.mountedVolumes())
+        guard updated != config else { return }
+        if let message = apply(updated) { log.write("Kunde inte spara mappens volym: \(message)") }
+    }
+
     // MARK: Engine
 
     private func makeEngine() {
@@ -249,6 +266,8 @@ struct PendingFolder: Equatable {
             config: config, runner: runner,
             makeWatcher: { path, onChange in FolderWatcher(path: path, onChange: onChange) },
             network: SystemNetworkMonitor(),
+            volumes: volumes,
+            state: StateStore(url: StateStore.defaultURL),
             onStatus: { [weak self] status in
                 Task { @MainActor in self?.engineStatus = status; self?.publish() }
             },

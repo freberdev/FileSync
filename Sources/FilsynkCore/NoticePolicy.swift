@@ -44,8 +44,9 @@ public struct NoticePolicy: Sendable {
 
     public init() {}
 
-    /// Called after every finished sync and at every periodic check.
-    public mutating func evaluate(folder: String, schedule: FolderSchedule, now: Date) -> [Notice] {
+    /// Called after every finished sync and at every periodic check. Without `allowStale` the
+    /// notice about changes waiting for more than a day is not given (a disk may be away for long).
+    public mutating func evaluate(folder: String, schedule: FolderSchedule, now: Date, allowStale: Bool = true) -> [Notice] {
         var mem = memory[folder] ?? FolderMemory()
         var notices: [Notice] = []
 
@@ -67,7 +68,7 @@ public struct NoticePolicy: Sendable {
             notices.append(.repeatedFailure(folder: folder, message: message))
         }
 
-        if let since = schedule.dirtySince, now.timeIntervalSince(since) > Self.staleAge,
+        if allowStale, let since = schedule.dirtySince, now.timeIntervalSince(since) > Self.staleAge,
            mem.lastStaleNotice.map({ now.timeIntervalSince($0) >= Self.staleAge }) ?? true {
             mem.lastStaleNotice = now
             notices.append(.stale(folder: folder))

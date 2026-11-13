@@ -121,7 +121,7 @@ struct EndToEndTests {
             timing: EngineTiming(quiet: 1, maxWait: 5, backoff: [2, 4], noticeCheckInterval: 60),
             runner: SyncRunner(process: SystemProcessRunner(), target: .ssh),
             makeWatcher: { path, onChange in FolderWatcher(path: path, onChange: onChange) },
-            network: SystemNetworkMonitor(),
+            network: SystemNetworkMonitor(), volumes: FakeVolumes(),
             onStatus: { recorder.status($0) },
             onNotice: { recorder.notice($0) })
 

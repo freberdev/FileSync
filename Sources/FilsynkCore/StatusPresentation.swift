@@ -1,7 +1,7 @@
 import Foundation
 
 public enum FolderState: Equatable, Sendable {
-    case notConfigured, synced, pending, syncing, waitingForServer, error(String)
+    case notConfigured, synced, pending, syncing, waitingForServer, notConnected, error(String)
 }
 
 /// The state of one destination of a folder.
@@ -24,7 +24,7 @@ public struct FolderStatus: Equatable, Sendable, Identifiable {
 }
 
 public enum OverallState: Equatable, Sendable {
-    case notConfigured, paused, error(String), syncing, waitingForServer, pending, synced
+    case notConfigured, paused, notConnected, error(String), syncing, waitingForServer, pending, synced
 }
 
 public struct EngineStatus: Equatable, Sendable {
@@ -45,14 +45,20 @@ public struct EngineStatus: Equatable, Sendable {
         // A folder that is not set up is not backed up, whatever the others do.
         if folders.isEmpty || folders.contains(where: { $0.state == .notConfigured }) { return .notConfigured }
         if isPaused { return .paused }
-        for folder in folders {
+        // A disk that is not connected counts only when nothing else takes part.
+        let connected = connectedFolders
+        if connected.isEmpty { return .notConnected }
+        for folder in connected {
             if case .error(let message) = folder.state { return .error(message) }
         }
-        if folders.contains(where: { $0.state == .syncing }) { return .syncing }
-        if folders.contains(where: { $0.state == .waitingForServer }) { return .waitingForServer }
-        if folders.contains(where: { $0.state == .pending }) { return .pending }
+        if connected.contains(where: { $0.state == .syncing }) { return .syncing }
+        if connected.contains(where: { $0.state == .waitingForServer }) { return .waitingForServer }
+        if connected.contains(where: { $0.state == .pending }) { return .pending }
         return .synced
     }
+
+    /// The rows whose destination can be reached now.
+    var connectedFolders: [FolderStatus] { folders.filter { $0.state != .notConnected } }
 }
 
 public enum StatusPresentation {
@@ -73,7 +79,7 @@ public enum StatusPresentation {
     public static func headline(_ status: EngineStatus, timeZone: TimeZone) -> String {
         switch status.overall {
         case .synced:
-            guard let latest = status.folders.compactMap(\.lastSuccess).max() else { return "Allt synkat" }
+            guard let latest = status.connectedFolders.compactMap(\.lastSuccess).max() else { return "Allt synkat" }
             return "Allt synkat · \(clockTime(latest, timeZone: timeZone))"
         case .syncing: return "Synkar…"
         case .pending: return "Ändringar väntar"
@@ -81,6 +87,7 @@ public enum StatusPresentation {
         case .error(let message): return "Fel: \(message)"
         case .paused: return "Pausad"
         case .notConfigured: return "Inte inställd"
+        case .notConnected: return "Disken är inte inkopplad"
         }
     }
 
@@ -93,6 +100,7 @@ public enum StatusPresentation {
         case .error: return "exclamationmark.triangle"
         case .paused: return "pause.circle"
         case .notConfigured: return "gearshape"
+        case .notConnected: return "externaldrive.badge.xmark"
         }
     }
 
@@ -125,7 +133,19 @@ public enum StatusPresentation {
         case .waitingForServer: return "Väntar på servern"
         case .error: return "Fel"
         case .notConfigured: return "Inte inställd"
+        case .notConnected:
+            guard let last = folder.lastSuccess else { return "Inte inkopplad · aldrig synkad" }
+            return "Inte inkopplad · senast \(day(last, timeZone: timeZone))"
         }
+    }
+
+    private static func day(_ date: Date, timeZone: TimeZone) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
     }
 
     private static func clockTime(_ date: Date, timeZone: TimeZone) -> String {
