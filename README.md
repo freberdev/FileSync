@@ -322,7 +322,7 @@ Disken känns igen på sitt volym-id, aldrig på namnet. Kopplar du in en annan 
 - När den valda disken kopplas in synkas den direkt.
 - Medan disken är inkopplad följer den samma väntetid som servern.
 - När disken inte är inkopplad visar raden `Inte inkopplad · senast <datum>` och inget försöks. Menyradens ikon påverkas inte av en frånvarande disk.
-- Vid utmatning avbryts en pågående synk, så att disken går att mata ut. Nekar macOS utmatningen återupptar appen synken efter ungefär 20 sekunder.
+- Vid utmatning avbryts en pågående synk, så att disken går att mata ut. Nekar macOS utmatningen återupptar appen synken efter ungefär en minut.
 - En bevakad mapp som själv ligger på en extern disk synkas inte medan den disken är frånkopplad.
 
 ### Format

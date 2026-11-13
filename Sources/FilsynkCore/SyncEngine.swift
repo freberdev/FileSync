@@ -8,7 +8,7 @@ public struct EngineTiming: Equatable, Sendable {
     /// How long a volume that is about to be unmounted counts as gone if it never is (a refused eject).
     public var unmountGrace: TimeInterval
 
-    /// quiet/maxWait from the config, backoff 60/120/300/900 s, notice check every 600 s, unmount grace 20 s.
+    /// quiet/maxWait from the config, backoff 60/120/300/900 s, notice check every 600 s, unmount grace 60 s.
     public init(config: Config) {
         self.init(
             quiet: TimeInterval(config.quietSeconds),
@@ -18,7 +18,7 @@ public struct EngineTiming: Equatable, Sendable {
     }
 
     public init(quiet: TimeInterval, maxWait: TimeInterval, backoff: [TimeInterval], noticeCheckInterval: TimeInterval,
-                unmountGrace: TimeInterval = 20) {
+                unmountGrace: TimeInterval = 60) {
         self.quiet = quiet
         self.maxWait = maxWait
         self.backoff = backoff

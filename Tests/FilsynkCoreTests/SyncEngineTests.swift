@@ -1142,6 +1142,10 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
     }
     // MARK: Ejecting
 
+    @Test func unmountGraceIsAMinuteByDefault() {
+        #expect(EngineTiming(config: Config(server: "", folders: [])).unmountGrace == 60)
+    }
+
     static func ejecting(grace: TimeInterval) -> EngineTiming {
         EngineTiming(quiet: 30, maxWait: 60, backoff: [60], noticeCheckInterval: 0.05, unmountGrace: grace)
     }
