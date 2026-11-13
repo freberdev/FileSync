@@ -11,7 +11,20 @@ scripts/build-app.sh --install
 open /Applications/Filsynk.app
 ```
 
-Skriptet bygger `build/Filsynk.app`, signerar den lokalt (utan utvecklarcertifikat) och kopierar den till `/Applications`. Utan `--install` byggs bara `build/Filsynk.app`. Appen är inte notariserad och går inte att dela med andra som den är.
+Skriptet bygger `build/Filsynk.app`, signerar den och kopierar den till `/Applications`. Utan `--install` byggs bara `build/Filsynk.app`. Appen är inte notariserad och går inte att dela med andra som den är.
+
+### Signering
+
+Utan vidare signeras appen lokalt, utan certifikat. Då ser macOS varje nytt bygge som en ny app, och tillstånden för notiser, start vid inloggning och det lokala nätverket kan behöva ges om efter en ombyggnad.
+
+Med ett utvecklarcertifikat ligger tillstånden kvar mellan byggen. Ange certifikatet på ett av två sätt:
+
+- miljövariabeln `FILSYNK_SIGN_IDENTITY`, eller
+- första raden i filen `.signing-identity` i projektmappen. Filen checkas inte in.
+
+Värdet är certifikatets namn eller SHA-1-hash, så som `security find-identity -v -p codesigning` visar dem. Ett certifikat av typen Apple Development räcker för den egna Macen. För att köra appen på en annan dator krävs Developer ID Application och notarisering.
+
+Första bygget med certifikat räknas som en ny app, så tillstånden ges en gång till.
 
 Appikonen ligger i `Resources/AppIcon.icns` och ritas av `swift scripts/make-icon.swift`. Kör skriptet igen om du ändrar ritningen.
 

@@ -12,8 +12,20 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Filsynk"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
-codesign --force --sign - "$APP"
-echo "Built $APP"
+
+# Signing identity: $FILSYNK_SIGN_IDENTITY, else the first line of .signing-identity, else ad hoc.
+# A certificate keeps macOS permissions (notifications, login item, local network) across rebuilds.
+IDENTITY="${FILSYNK_SIGN_IDENTITY:-}"
+if [ -z "$IDENTITY" ] && [ -f .signing-identity ]; then
+    IDENTITY="$(sed -n '1{s/^[[:space:]]*//;s/[[:space:]]*$//;p;}' .signing-identity)"
+fi
+if [ -z "$IDENTITY" ] || [ "$IDENTITY" = "-" ]; then
+    codesign --force --sign - "$APP"
+    echo "Built $APP (signed ad hoc)"
+else
+    codesign --force --sign "$IDENTITY" "$APP"
+    echo "Built $APP (signed with a certificate)"
+fi
 
 if [ "${1:-}" = "--install" ]; then
     # Only ask a running app to quit; "tell application" would otherwise launch it.
