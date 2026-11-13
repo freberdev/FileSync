@@ -47,7 +47,7 @@ struct ConnectionSetupTests {
         let r = await ConnectionSetup(process: f).check(server: server, identityFile: key)
         #expect(r == .ok(rsyncVersion: "3.2.7"))
         #expect(f.calls.first?.executable == "/usr/bin/ssh")
-        #expect(f.calls.first?.arguments.suffix(2) == [server, "rsync --version"])
+        #expect(f.calls.first?.arguments.suffix(3) == ["--", server, "rsync --version"])
     }
 
     @Test func checkRejectsOld() async {
@@ -173,5 +173,40 @@ struct ConnectionSetupTests {
         } catch let e as ConnectionError {
             #expect(e == .remoteCommandFailed(.authDenied))
         } catch { Issue.record("wrong error \(error)") }
+    }
+
+    @Test func validateFlagsUnsafeServer() {
+        for bad in ["-oProxyCommand=x", "a b@host", "u@h\tx", "u@h$x"] {
+            #expect(Config(server: bad).validate().contains(.unsafeServer(bad)))
+        }
+        for good in ["user@host", "host", ""] {
+            #expect(Config(server: good).validate().isEmpty)
+        }
+    }
+
+    @Test func checkRejectsUnsafeServerWithoutProcess() async {
+        for bad in ["-oProxyCommand=x", "a b", ""] {
+            let f = FakeProcess()
+            let r = await ConnectionSetup(process: f).check(server: bad, identityFile: key)
+            #expect(r == .failed("Serveradressen är ogiltig"))
+            #expect(f.calls.isEmpty)
+        }
+    }
+
+    @Test func resolveRejectsUnsafeServerWithoutProcess() async {
+        for bad in ["-oProxyCommand=x", "a b", ""] {
+            let f = FakeProcess()
+            await #expect(throws: ConnectionError.unsafeServer) {
+                _ = try await ConnectionSetup(process: f).resolveRemotePath("~/Sync", server: bad, identityFile: key)
+            }
+            #expect(f.calls.isEmpty)
+        }
+    }
+
+    @Test func sshArgumentsPutDoubleDashBeforeServer() async throws {
+        let f = fake(out: "/home/u/Sync\n")
+        _ = try await ConnectionSetup(process: f).resolveRemotePath("~/Sync", server: "user@host", identityFile: key)
+        let args = f.calls.first?.arguments ?? []
+        #expect(args.count >= 3 && args[args.count - 3] == "--" && args[args.count - 2] == "user@host")
     }
 }

@@ -84,6 +84,9 @@ public struct Config: Codable, Equatable, Sendable {
         if Config.isUnsafe(identityFile) {
             issues.append(.unsafeIdentityFile(identityFile))
         }
+        if !server.isEmpty, Config.isUnsafeServer(server) {
+            issues.append(.unsafeServer(server))
+        }
 
         let local = folders.map(\.path).filter { $0.hasPrefix("/") }
         for (outer, inner) in Config.nestedPairs(local, components: Config.localComponents) {
@@ -97,6 +100,13 @@ public struct Config: Codable, Equatable, Sendable {
     }
 
     private static let unsafeCharacters: Set<Character> = [" ", "\"", "'", "$", "`", "\\", "\n", "\r", "\r\n"]
+
+    /// True for a server string that ssh or rsync could read as an option or that holds
+    /// whitespace, control or shell-significant characters. Empty is not judged here.
+    static func isUnsafeServer(_ s: String) -> Bool {
+        s.hasPrefix("-") || isUnsafe(s)
+            || s.unicodeScalars.contains { $0.properties.isWhitespace || $0.properties.generalCategory == .control }
+    }
 
     static func isUnsafe(_ s: String) -> Bool {
         s.contains { unsafeCharacters.contains($0) }
@@ -146,6 +156,7 @@ public enum ConfigIssue: Equatable, Sendable {
     case nestedRemotePaths(String, String)
     case unsafeRemotePath(String)
     case unsafeIdentityFile(String)
+    case unsafeServer(String)
 
     public var message: String {
         switch self {
@@ -157,6 +168,8 @@ public enum ConfigIssue: Equatable, Sendable {
             return "Mapparna på servern \"\(a)\" och \"\(b)\" ligger inuti varandra."
         case .unsafeRemotePath(let p):
             return "Sökvägen på servern \"\(p)\" innehåller otillåtna tecken (mellanslag, citattecken, $, ` eller \\)."
+        case .unsafeServer(let s):
+            return "Serveradressen är ogiltig: \(s)"
         case .unsafeIdentityFile(let p):
             return "Nyckelfilen \"\(p)\" innehåller otillåtna tecken (mellanslag, citattecken, $, ` eller \\)."
         }

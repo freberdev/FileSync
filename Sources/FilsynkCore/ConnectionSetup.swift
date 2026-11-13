@@ -9,6 +9,7 @@ public enum ConnectionResult: Equatable, Sendable {
 
 public enum ConnectionError: Error, Equatable, Sendable {
     case unsafePath(String)
+    case unsafeServer
     case remoteCommandFailed(SyncOutcome)
     case unexpectedOutput(String)
     case keyCreationFailed(String)
@@ -39,6 +40,7 @@ public struct ConnectionSetup: Sendable {
     }
 
     public func check(server: String, identityFile: String) async -> ConnectionResult {
+        if server.isEmpty || Config.isUnsafeServer(server) { return .failed("Serveradressen är ogiltig") }
         let result: ProcessResult
         do {
             result = try await remote(server: server, identityFile: identityFile, command: "rsync --version")
@@ -69,6 +71,7 @@ public struct ConnectionSetup: Sendable {
 
     /// Creates the folder on the server if needed and returns its absolute, symlink-resolved path.
     public func resolveRemotePath(_ entered: String, server: String, identityFile: String) async throws -> String {
+        if server.isEmpty || Config.isUnsafeServer(server) { throw ConnectionError.unsafeServer }
         if Config.isUnsafe(entered) { throw ConnectionError.unsafePath(entered) }
 
         let quoted: String
@@ -105,6 +108,6 @@ public struct ConnectionSetup: Sendable {
 
     private func remote(server: String, identityFile: String, command: String) async throws -> ProcessResult {
         try await process.run(
-            "/usr/bin/ssh", RsyncCommand.sshArguments(identityFile: identityFile) + [server, command])
+            "/usr/bin/ssh", RsyncCommand.sshArguments(identityFile: identityFile) + ["--", server, command])
     }
 }
