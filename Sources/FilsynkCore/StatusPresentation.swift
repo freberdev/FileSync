@@ -96,6 +96,20 @@ public enum StatusPresentation {
         return path
     }
 
+    /// The state column of a folder's menu row.
+    public static func folderLabel(_ folder: FolderStatus, timeZone: TimeZone) -> String {
+        switch folder.state {
+        case .synced:
+            guard let last = folder.lastSuccess else { return "✓" }
+            return "✓ \(clockTime(last, timeZone: timeZone))"
+        case .syncing: return "Synkar…"
+        case .pending: return "Väntar"
+        case .waitingForServer: return "Väntar på servern"
+        case .error: return "Fel"
+        case .notConfigured: return "Inte inställd"
+        }
+    }
+
     private static func clockTime(_ date: Date, timeZone: TimeZone) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")

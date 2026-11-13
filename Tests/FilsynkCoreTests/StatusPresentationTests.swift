@@ -19,6 +19,19 @@ import Testing
                      isPaused: paused, configError: configError)
     }
 
+    @Test func folderLabelForEachState() {
+        func label(_ state: FolderState, _ last: Date? = nil) -> String {
+            StatusPresentation.folderLabel(FolderStatus(path: "~/Sync", state: state, lastSuccess: last), timeZone: utc)
+        }
+        #expect(label(.synced, utcTime(hour: 9, minute: 5)) == "✓ 09:05")
+        #expect(label(.synced) == "✓")
+        #expect(label(.syncing) == "Synkar…")
+        #expect(label(.pending) == "Väntar")
+        #expect(label(.waitingForServer) == "Väntar på servern")
+        #expect(label(.error("x")) == "Fel")
+        #expect(label(.notConfigured) == "Inte inställd")
+    }
+
     @Test func headlineForEachOverallState() {
         // 14:32 UTC on some day
         let at1432 = utcTime(hour: 14, minute: 32)
