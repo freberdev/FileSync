@@ -112,18 +112,6 @@ public struct SetupFlow: Sendable {
         return .added(result)
     }
 
-    /// Resolves the remote path and appends the folder. Never returns an invalid config.
-    public func addFolder(to config: Config, localPath: String, remoteEntered: String) async -> AddFolderResult {
-        await addServerDestination(to: config, localPath: localPath, remoteEntered: remoteEntered)
-    }
-
-    /// Removes the folder from the configuration only; nothing is deleted on the server.
-    public static func removeFolder(_ folder: FolderConfig, from config: Config) -> Config {
-        var updated = config
-        updated.folders.removeAll { $0 == folder }
-        return updated
-    }
-
     /// Removes one destination from the configuration only; nothing is touched on the server or the
     /// disk. The folder goes when its last destination does.
     public static func removeDestination(_ destinationID: String, fromFolder path: String, in config: Config) -> Config {

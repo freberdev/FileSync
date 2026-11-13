@@ -241,31 +241,31 @@ struct SetupFlowTests {
         let log = LogSink()
         let c = config(folders: [])
         let out = await SetupFlow(process: f, log: { log.add($0) })
-            .addFolder(to: c, localPath: "/Users/x/A", remoteEntered: "~/A")
+            .addServerDestination(to: c, localPath: "/Users/x/A", remoteEntered: "~/A")
         #expect(out == .rejected("Kunde inte köra kommandot: \(LaunchError().localizedDescription)"))
         #expect(log.lines.contains { $0.contains("boom") })
     }
 
-    // MARK: addFolder
+    // MARK: addServerDestination
 
-    @Test func addFolderRejectsSshDirectoryWithoutContactingServer() async {
+    @Test func addServerDestinationRejectsSshDirectoryWithoutContactingServer() async {
         let p = ScriptedProcess()
-        let out = await SetupFlow(process: p).addFolder(to: config(folders: []), localPath: "/Users/x/A", remoteEntered: "~/.ssh")
+        let out = await SetupFlow(process: p).addServerDestination(to: config(folders: []), localPath: "/Users/x/A", remoteEntered: "~/.ssh")
         #expect(out == .rejected(ConfigIssue.remotePathNotAllowed("~/.ssh").message))
         #expect(!p.contactedServer)
     }
 
-    @Test func addFolderRejectsPathThatResolvesIntoSshDirectory() async {
+    @Test func addServerDestinationRejectsPathThatResolvesIntoSshDirectory() async {
         let p = ScriptedProcess()
         p.resolve = { _ in ProcessResult(exitCode: 0, stdout: "/home/u\n/home/u\n/home/u/.ssh\n", stderr: "") }
-        let out = await SetupFlow(process: p).addFolder(to: config(folders: []), localPath: "/Users/x/A", remoteEntered: "~/nycklar")
+        let out = await SetupFlow(process: p).addServerDestination(to: config(folders: []), localPath: "/Users/x/A", remoteEntered: "~/nycklar")
         #expect(out == .rejected(ConfigIssue.remotePathNotAllowed("/home/u/.ssh").message))
     }
 
-    @Test func addFolderResolvesAndAppends() async {
+    @Test func addServerDestinationResolvesAndAppends() async {
         let p = ScriptedProcess()
         let c = config(folders: [.init(path: "/Users/x/Sync", remotePath: "/home/u/Sync")])
-        let out = await SetupFlow(process: p).addFolder(to: c, localPath: "/Users/x/Pictures", remoteEntered: " ~/Pictures ")
+        let out = await SetupFlow(process: p).addServerDestination(to: c, localPath: "/Users/x/Pictures", remoteEntered: " ~/Pictures ")
         #expect(out == .added(Config(server: c.server, identityFile: c.identityFile, folders: [
             c.folders[0], .init(path: "/Users/x/Pictures", remotePath: "/home/u/Pictures"),
         ], verifiedServer: "u@h", verifiedHome: "/home/u", verifiedLogicalHome: "/home/u")))
@@ -312,67 +312,57 @@ struct SetupFlowTests {
         #expect(p.calls.isEmpty)
     }
 
-    @Test func addFolderRejectsNestedLocalWithoutContactingServer() async {
+    @Test func addServerDestinationRejectsNestedLocalWithoutContactingServer() async {
         let p = ScriptedProcess()
         let c = config(folders: [.init(path: "/Users/x/Sync", remotePath: "/home/u/Sync")])
-        let out = await SetupFlow(process: p).addFolder(to: c, localPath: "/Users/x/Sync/inner", remoteEntered: "~/inner")
+        let out = await SetupFlow(process: p).addServerDestination(to: c, localPath: "/Users/x/Sync/inner", remoteEntered: "~/inner")
         #expect(out == .rejected(ConfigIssue.nestedLocalPaths("/Users/x/Sync", "/Users/x/Sync/inner").message))
         #expect(!p.contactedServer)
     }
 
-    @Test func addFolderRejectsUnsafeRemoteWithoutContactingServer() async {
+    @Test func addServerDestinationRejectsUnsafeRemoteWithoutContactingServer() async {
         let p = ScriptedProcess()
         let c = config(folders: [])
-        let out = await SetupFlow(process: p).addFolder(to: c, localPath: "/Users/x/A", remoteEntered: "~/a b")
+        let out = await SetupFlow(process: p).addServerDestination(to: c, localPath: "/Users/x/A", remoteEntered: "~/a b")
         #expect(out == .rejected(ConfigIssue.unsafeRemotePath("~/a b").message))
         #expect(!p.contactedServer)
     }
 
-    @Test func addFolderNeedsVerifiedConnection() async {
+    @Test func addServerDestinationNeedsVerifiedConnection() async {
         for (server, verified) in [("u@h", ""), ("new@h", "u@h"), ("", "")] {
             let p = ScriptedProcess()
-            let out = await SetupFlow(process: p).addFolder(
+            let out = await SetupFlow(process: p).addServerDestination(
                 to: config(server: server, verified: verified, folders: []), localPath: "/Users/x/A", remoteEntered: "~/A")
             #expect(out == .rejected("Testa anslutningen först."))
             #expect(!p.contactedServer)
         }
     }
 
-    @Test func addFolderRejectsHomeDirectory() async {
+    @Test func addServerDestinationRejectsHomeDirectory() async {
         let p = ScriptedProcess()
         // With the server's home known, "~" is refused before the server is contacted.
-        let out = await SetupFlow(process: p).addFolder(to: config(folders: []), localPath: "/Users/x/A", remoteEntered: "~")
+        let out = await SetupFlow(process: p).addServerDestination(to: config(folders: []), localPath: "/Users/x/A", remoteEntered: "~")
         #expect(out == .rejected(ConfigIssue.remotePathTooBroad("~").message))
         #expect(!p.contactedServer)
         // A path that only the server can resolve to the home is refused by the server-side check.
         let q = ScriptedProcess()
         q.resolve = { _ in ProcessResult(exitCode: 0, stdout: "/home/u\n/home/u\n/home/u\n", stderr: "") }
-        let viaLink = await SetupFlow(process: q).addFolder(to: config(folders: []), localPath: "/Users/x/A", remoteEntered: "~/hem")
+        let viaLink = await SetupFlow(process: q).addServerDestination(to: config(folders: []), localPath: "/Users/x/A", remoteEntered: "~/hem")
         #expect(viaLink == .rejected("Välj en egen mapp på servern, inte hemkatalogen eller en mapp ovanför den."))
     }
 
-    @Test func addFolderRejectsRemoteNestingFoundOnlyAfterResolving() async {
+    @Test func addServerDestinationRejectsRemoteNestingFoundOnlyAfterResolving() async {
         let p = ScriptedProcess() // "~/Sync/sub" resolves to /home/u/Sync/sub
         let c = config(folders: [.init(path: "/Users/x/Sync", remotePath: "/home/u/Sync")])
-        let out = await SetupFlow(process: p).addFolder(to: c, localPath: "/Users/x/Other", remoteEntered: "~/Sync/sub")
+        let out = await SetupFlow(process: p).addServerDestination(to: c, localPath: "/Users/x/Other", remoteEntered: "~/Sync/sub")
         #expect(out == .rejected(ConfigIssue.nestedRemotePaths("/home/u/Sync", "/home/u/Sync/sub").message))
     }
 
-    @Test func addFolderReportsServerFailure() async {
+    @Test func addServerDestinationReportsServerFailure() async {
         let p = ScriptedProcess()
         p.resolve = { _ in ProcessResult(exitCode: 255, stdout: "", stderr: "ssh: connect to host h port 22: Operation timed out") }
-        let out = await SetupFlow(process: p).addFolder(to: config(folders: []), localPath: "/Users/x/A", remoteEntered: "~/A")
+        let out = await SetupFlow(process: p).addServerDestination(to: config(folders: []), localPath: "/Users/x/A", remoteEntered: "~/A")
         #expect(out == .rejected("Kunde inte skapa mappen på servern: Servern nås inte"))
-    }
-
-    // MARK: removeFolder
-
-    @Test func removeFolderDropsOnlyThatFolderAndNeverTouchesServer() {
-        let a = FolderConfig(path: "/Users/x/A", remotePath: "/srv/A")
-        let b = FolderConfig(path: "/Users/x/B", remotePath: "/srv/B")
-        let c = config(folders: [a, b])
-        #expect(SetupFlow.removeFolder(a, from: c).folders == [b])
-        #expect(SetupFlow.removeFolder(.init(path: "/nope", remotePath: "/x"), from: c) == c)
     }
 }
 
@@ -505,11 +495,6 @@ final class DiskDestinationTests {
         let out = await SetupFlow(process: p).addServerDestination(to: c, localPath: "/Users/x/A", remoteEntered: "~/B")
         #expect(out == .rejected("Mappen har redan ett mål på servern."))
         #expect(!p.contactedServer)
-    }
-
-    @Test func addFolderStillAppendsNewFolders() async {
-        let out = await SetupFlow(process: ScriptedProcess()).addFolder(to: config(), localPath: "/Users/x/A", remoteEntered: "~/A")
-        #expect(out == .added(config([FolderConfig(path: "/Users/x/A", remotePath: "/home/u/A")])))
     }
 
     @Test func acceptsFolderWithOnlyFinderFiles() throws {
