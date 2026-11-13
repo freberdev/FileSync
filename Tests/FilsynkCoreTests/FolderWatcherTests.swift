@@ -45,11 +45,20 @@ private final class CallCounter: @unchecked Sendable {
         let counter = CallCounter()
         let watcher = FolderWatcher(path: dir.path, latency: 0.2) { counter.increment() }
         watcher.start()
-        watcher.stop()
+        defer { watcher.stop() }
 
         try "hej".write(to: dir.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+        let deadline = Date().addingTimeInterval(10)
+        while counter.count == 0 && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        #expect(counter.count > 0)
+
+        watcher.stop()
+        let countAfterStop = counter.count
+        try "mer".write(to: dir.appendingPathComponent("b.txt"), atomically: true, encoding: .utf8)
         try await Task.sleep(for: .seconds(3))
-        #expect(counter.count == 0)
+        #expect(counter.count == countAfterStop)
     }
 
     @Test func startAndStopTwiceAreHarmless() throws {

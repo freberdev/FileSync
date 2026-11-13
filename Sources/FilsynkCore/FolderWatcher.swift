@@ -7,9 +7,9 @@ public typealias WatcherFactory = @Sendable (_ path: String, _ onChange: @escapi
 /// Watches a directory recursively with FSEvents and calls `onChange` once per event group.
 /// The callback carries no information about which files changed.
 public final class FolderWatcher: FolderWatching, @unchecked Sendable {
-    /// Callback context owned by the stream (retained/released through the stream's context
-    /// callbacks), so the stream never keeps the watcher itself alive.
-    private final class Context {
+    /// Callback context. Owned by the watcher (strongly) and passed to the stream unretained, so
+    /// the stream never keeps the watcher alive; `stop()` keeps it alive past any queued callback.
+    private final class Context: @unchecked Sendable {  // isActive is queue-confined
         let onChange: @Sendable () -> Void
         var isActive = true  // only touched on `queue`
         init(onChange: @escaping @Sendable () -> Void) { self.onChange = onChange }
@@ -36,15 +36,13 @@ public final class FolderWatcher: FolderWatching, @unchecked Sendable {
     public func start() {
         onQueue {
             guard stream == nil else { return }
-            let realPath = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+            let realPath = Self.realPath(of: path)
             let context = Context(onChange: onChange)
             var streamContext = FSEventStreamContext(
                 version: 0,
-                info: Unmanaged.passRetained(context).toOpaque(),
+                info: Unmanaged.passUnretained(context).toOpaque(),
                 retain: nil,
-                release: { info in
-                    if let info { Unmanaged<Context>.fromOpaque(info).release() }
-                },
+                release: nil,
                 copyDescription: nil)
             let callback: FSEventStreamCallback = { _, info, _, _, _, _ in
                 guard let info else { return }
@@ -73,14 +71,25 @@ public final class FolderWatcher: FolderWatching, @unchecked Sendable {
     /// and stop runs there synchronously).
     public func stop() {
         onQueue {
-            context?.isActive = false
+            let retiring = context
+            retiring?.isActive = false
             context = nil
-            guard let stream else { return }
-            self.stream = nil
-            FSEventStreamStop(stream)
-            FSEventStreamInvalidate(stream)
-            FSEventStreamRelease(stream)
+            if let stream {
+                self.stream = nil
+                FSEventStreamStop(stream)
+                FSEventStreamInvalidate(stream)
+                FSEventStreamRelease(stream)
+            }
+            // A callback block may already be queued: keep the context alive until it has run.
+            if let retiring { queue.async { withExtendedLifetime(retiring) {} } }
         }
+    }
+
+    /// Canonical path (resolves symlinks such as /tmp -> /private/tmp); the original on failure.
+    private static func realPath(of path: String) -> String {
+        guard let resolved = realpath(path, nil) else { return path }
+        defer { free(resolved) }
+        return String(cString: resolved)
     }
 
     /// Runs `body` on `queue`, directly if already there (e.g. `stop()` called from `onChange`).
