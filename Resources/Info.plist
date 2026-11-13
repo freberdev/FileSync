@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>dev.freber.filsynk</string>
+    <string>com.freberdev.filsynk</string>
     <key>CFBundleName</key>
     <string>Filsynk</string>
     <key>CFBundleIconFile</key>

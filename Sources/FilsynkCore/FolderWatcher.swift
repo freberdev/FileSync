@@ -19,7 +19,7 @@ public final class FolderWatcher: FolderWatching, @unchecked Sendable {
     private let latency: TimeInterval
     private let onChange: @Sendable () -> Void
     // Serial queue: runs FSEvents callbacks and guards `stream` / `context`.
-    private let queue = DispatchQueue(label: "dev.freber.filsynk.folderwatcher")
+    private let queue = DispatchQueue(label: "com.freberdev.filsynk.folderwatcher")
     private let queueKey = DispatchSpecificKey<Void>()
     private var stream: FSEventStreamRef?
     private var context: Context?

@@ -15,7 +15,7 @@ public final class SystemNetworkMonitor: NetworkMonitoring, @unchecked Sendable 
     private let lock = NSLock()  // guards `monitor`, `metered`
     private var monitor: NWPathMonitor?
     private var metered = false
-    private let queue = DispatchQueue(label: "dev.freber.filsynk.networkmonitor")
+    private let queue = DispatchQueue(label: "com.freberdev.filsynk.networkmonitor")
 
     public init() {}
 
