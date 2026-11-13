@@ -87,6 +87,9 @@ public final class DiskSyncRunner: @unchecked Sendable {
         // 5. Samma disk på samma plats?
         guard isSameVolume(volume, disk: disk) else { return .unreachable }
 
+        // Ett avbrott sätter inte igång något mer.
+        guard !Task.isCancelled else { return .failed("Synken avbröts") }
+
         // 6. Flytta undan det som försvunnit.
         do {
             var listed = DeletionList.parse(listing.stdout)
@@ -101,6 +104,7 @@ public final class DiskSyncRunner: @unchecked Sendable {
         }
 
         // 7. Den riktiga körningen.
+        guard !Task.isCancelled else { return .failed("Synken avbröts") }
         guard isSameVolume(volume, disk: disk) else { return .unreachable }
         var raderat = stat()
         if lstat(destination + "/Raderat", &raderat) == 0, raderat.st_mode & S_IFMT != S_IFDIR {

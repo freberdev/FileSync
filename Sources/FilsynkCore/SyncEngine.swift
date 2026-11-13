@@ -5,8 +5,10 @@ public struct EngineTiming: Equatable, Sendable {
     public var maxWait: TimeInterval
     public var backoff: [TimeInterval]
     public var noticeCheckInterval: TimeInterval
+    /// How long a volume that is about to be unmounted counts as gone if it never is (a refused eject).
+    public var unmountGrace: TimeInterval
 
-    /// quiet/maxWait from the config, backoff 60/120/300/900 s, notice check every 600 s.
+    /// quiet/maxWait from the config, backoff 60/120/300/900 s, notice check every 600 s, unmount grace 20 s.
     public init(config: Config) {
         self.init(
             quiet: TimeInterval(config.quietSeconds),
@@ -15,11 +17,13 @@ public struct EngineTiming: Equatable, Sendable {
             noticeCheckInterval: 600)
     }
 
-    public init(quiet: TimeInterval, maxWait: TimeInterval, backoff: [TimeInterval], noticeCheckInterval: TimeInterval) {
+    public init(quiet: TimeInterval, maxWait: TimeInterval, backoff: [TimeInterval], noticeCheckInterval: TimeInterval,
+                unmountGrace: TimeInterval = 20) {
         self.quiet = quiet
         self.maxWait = maxWait
         self.backoff = backoff
         self.noticeCheckInterval = noticeCheckInterval
+        self.unmountGrace = unmountGrace
     }
 }
 
@@ -72,6 +76,12 @@ public actor SyncEngine {
 
     private static let duplicateMessage = "Två inkopplade diskar har samma id."
 
+    private struct Leaving {
+        let mountPath: String
+        /// Tells the grace timer of this will-unmount from that of an earlier one.
+        let token: Int
+    }
+
     /// A running sync, keyed by destination. Kept until its task has ended, also after the
     /// engine cancelled it, so that a destination never has two syncs at once.
     private struct InFlight {
@@ -104,7 +114,13 @@ public actor SyncEngine {
     /// False from `start()` until the first network update of that start; unknown counts as metered.
     private var isNetworkKnown = false
     /// The mounted volumes as last read; refreshed on start, reload and every mount event.
+    /// Volumes in `leaving` are left out.
     private var mounted: [VolumeInfo]
+    /// Volumes that are about to be unmounted, by lowercased id. They count as gone until they are
+    /// unmounted, mounted again, or the grace has passed (the eject was refused).
+    private var leaving: [String: Leaving] = [:]
+    private var leaveTasks: [String: Task<Void, Never>] = [:]
+    private var nextLeaveToken = 0
     /// Changes on every start/stop; callbacks carrying an older value are ignored.
     private var generation = 0
     private var nextSyncID = 0
@@ -154,24 +170,7 @@ public actor SyncEngine {
         isNetworkKnown = false
         generation += 1
         let generation = self.generation
-        mounted = volumes.mountedVolumes()
-        let now = Date()
-        for index in slots.indices where slots[index].participates {
-            let path = slots[index].folder.path
-            if watchers[path] == nil {
-                let watcher = makeWatcher(path) { [weak self] in
-                    Task { await self?.folderChanged(path, generation: generation) }
-                }
-                watchers[path] = watcher
-                watcher.start()
-            }
-            if volumeHold(index) == nil {
-                slots[index].schedule.requestImmediate(at: now)
-            }
-        }
-        network.start { [weak self] in
-            Task { await self?.networkChanged(generation: generation) }
-        }
+        // Events first, then the list: a volume mounted in between is in one of them.
         volumes.start(
             onMount: { [weak self] volume in
                 Task { await self?.volumeMounted(volume, generation: generation) }
@@ -179,11 +178,32 @@ public actor SyncEngine {
             onWillUnmount: { [weak self] volume in
                 Task { await self?.volumeWillUnmount(volume, generation: generation) }
             },
-            onUnmount: { [weak self] _ in
-                Task { await self?.volumeUnmounted(generation: generation) }
+            onUnmount: { [weak self] path in
+                Task { await self?.volumeUnmounted(path, generation: generation) }
             })
+        for (id, entry) in leaving { armLeaveTimer(id: id, token: entry.token, generation: generation) }
+        refreshVolumes()
+        let now = Date()
+        for index in slots.indices where slots[index].participates {
+            let path = slots[index].folder.path
+            if watchers[path] == nil { startWatcher(path, generation: generation) }
+            if volumeHold(index) == nil {
+                slots[index].schedule.requestImmediate(at: now)
+            }
+        }
+        network.start { [weak self] in
+            Task { await self?.networkChanged(generation: generation) }
+        }
         startNoticeChecks(generation: generation)
         runDue()
+    }
+
+    private func startWatcher(_ path: String, generation: Int) {
+        let watcher = makeWatcher(path) { [weak self] in
+            Task { await self?.folderChanged(path, generation: generation) }
+        }
+        watchers[path] = watcher
+        watcher.start()
     }
 
     /// Stops watching and cancels running syncs; their outcomes are discarded.
@@ -204,6 +224,9 @@ public actor SyncEngine {
         wakeTask = nil
         noticeTask?.cancel()
         noticeTask = nil
+        // `leaving` is kept; `start()` arms the timers again.
+        for task in leaveTasks.values { task.cancel() }
+        leaveTasks.removeAll()
         forced.removeAll()
         for key in Array(inFlight.keys) where inFlight[key]?.discarded == false && !kept.contains(key) {
             discardSync(of: key)
@@ -251,10 +274,7 @@ public actor SyncEngine {
         stop(keepingSyncsOf: kept)
         for index in newSlots.indices {
             let slot = newSlots[index]
-            let same = slots.first {
-                $0.key == slot.key && $0.destination == slot.destination
-                    && $0.folder.sourceVolumeUUID == slot.folder.sourceVolumeUUID && (!slot.destination.isServer || sameServer)
-            }
+            let same = slots.first { $0.key == slot.key && $0.destination == slot.destination }
             newSlots[index].savedSuccess = same?.lastSuccess
             guard let old = previous(newSlots[index]) else { continue }
             newSlots[index].schedule = old.schedule.retimed(
@@ -268,7 +288,7 @@ public actor SyncEngine {
         if wasRunning {
             start()
         } else {
-            mounted = volumes.mountedVolumes()
+            refreshVolumes()
             publishIfChanged()
         }
     }
@@ -338,10 +358,19 @@ public actor SyncEngine {
     }
 
     /// A volume was mounted: every destination that needs it is synced now, changed or not.
+    /// A folder on it gets a new watcher, since the old one may not report anything after a remount.
     private func volumeMounted(_ volume: VolumeInfo, generation: Int) {
         guard isRunning, generation == self.generation else { return }
-        mounted = volumes.mountedVolumes()
+        if let id = volume.uuid, !id.isEmpty { stopLeaving(id.lowercased()) }
+        refreshVolumes()
         if let id = volume.uuid, !id.isEmpty {
+            let onVolume = Set(slots.filter {
+                $0.participates && $0.folder.sourceVolumeUUID?.caseInsensitiveCompare(id) == .orderedSame
+            }.map(\.folder.path))
+            for path in onVolume.sorted() where watchers[path] != nil {
+                watchers[path]?.stop()
+                startWatcher(path, generation: generation)
+            }
             let now = Date()
             for index in slots.indices where slots[index].participates && slots[index].needs(volumeID: id) {
                 slots[index].schedule.requestImmediate(at: now)
@@ -354,21 +383,60 @@ public actor SyncEngine {
     /// counts as gone from now on, so that nothing starts on it before it has been unmounted.
     private func volumeWillUnmount(_ volume: VolumeInfo, generation: Int) {
         guard isRunning, generation == self.generation else { return }
-        let leaving = mounted.filter { $0.mountPath == volume.mountPath } + [volume]
-        let ids = leaving.compactMap(\.uuid).filter { !$0.isEmpty }
+        let going = mounted.filter { $0.mountPath == volume.mountPath } + [volume]
+        let ids = Set(going.compactMap { $0.uuid?.lowercased() }.filter { !$0.isEmpty })
         for key in Array(inFlight.keys) where inFlight[key]?.discarded == false {
             guard let slot = slots.first(where: { $0.key == key }),
                   ids.contains(where: { slot.needs(volumeID: $0) }) else { continue }
             discardSync(of: key)
         }
-        mounted.removeAll { $0.mountPath == volume.mountPath }
+        for id in ids {
+            nextLeaveToken += 1
+            leaving[id] = Leaving(mountPath: volume.mountPath, token: nextLeaveToken)
+            armLeaveTimer(id: id, token: nextLeaveToken, generation: generation)
+        }
+        mounted.removeAll { $0.mountPath == volume.mountPath || isLeaving($0) }
         runDue()
     }
 
-    private func volumeUnmounted(generation: Int) {
+    private func volumeUnmounted(_ path: String, generation: Int) {
         guard isRunning, generation == self.generation else { return }
-        mounted = volumes.mountedVolumes()
+        for (id, entry) in leaving where entry.mountPath == path { stopLeaving(id) }
+        refreshVolumes()
         runDue()
+    }
+
+    /// A volume that was about to go is still there after the grace: the eject was refused.
+    private func leaveExpired(id: String, token: Int, generation: Int) {
+        guard isRunning, generation == self.generation, leaving[id]?.token == token else { return }
+        stopLeaving(id)
+        refreshVolumes()
+        runDue()
+    }
+
+    private func armLeaveTimer(id: String, token: Int, generation: Int) {
+        leaveTasks[id]?.cancel()
+        let delay = timing.unmountGrace
+        leaveTasks[id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            await self?.leaveExpired(id: id, token: token, generation: generation)
+        }
+    }
+
+    private func stopLeaving(_ id: String) {
+        leaving[id] = nil
+        leaveTasks[id]?.cancel()
+        leaveTasks[id] = nil
+    }
+
+    private func isLeaving(_ volume: VolumeInfo) -> Bool {
+        guard let id = volume.uuid?.lowercased() else { return false }
+        return leaving[id] != nil
+    }
+
+    private func refreshVolumes() {
+        mounted = volumes.mountedVolumes().filter { !isLeaving($0) }
     }
 
     private func syncEnded(key: SlotKey, id: Int, outcome: SyncOutcome) {
@@ -382,7 +450,7 @@ public actor SyncEngine {
             // A volume that vanished without notice: once it is known to be gone, the destination
             // waits for it instead of retrying.
             if outcome == .unreachable, !slots[index].volumeIDs.isEmpty {
-                mounted = volumes.mountedVolumes()
+                refreshVolumes()
             }
             if outcome == .success { saveState() }
             emitNotices(for: index, now: now)
@@ -412,10 +480,21 @@ public actor SyncEngine {
         Self.volumeHold(slots[index], mounted: mounted)
     }
 
+    /// The folder must also lie on its recorded volume: with two disks of the same name, its path
+    /// may lead into the other one.
     private static func volumeHold(_ slot: Slot, mounted: [VolumeInfo]) -> VolumeHold? {
         var hold: VolumeHold?
-        for id in slot.volumeIDs {
-            switch VolumeLookup.find(uuid: id, in: mounted) {
+        if let source = slot.folder.sourceVolumeUUID, !source.isEmpty {
+            switch VolumeLookup.find(uuid: source, in: mounted) {
+            case .failure(.notMounted): return .absent
+            case .failure(.duplicate): hold = .duplicate
+            case .success:
+                guard let holder = VolumeLookup.volume(containing: slot.folder.path, in: mounted)?.uuid,
+                      holder.caseInsensitiveCompare(source) == .orderedSame else { return .absent }
+            }
+        }
+        if case .disk(let location) = slot.destination {
+            switch VolumeLookup.find(uuid: location.volumeUUID, in: mounted) {
             case .failure(.notMounted): return .absent
             case .failure(.duplicate): hold = .duplicate
             case .success: break

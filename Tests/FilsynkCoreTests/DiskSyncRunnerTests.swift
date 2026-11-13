@@ -30,10 +30,20 @@ final class FakeVolumes: VolumeMonitoring, @unchecked Sendable {
             return list
         }
     }
+    /// Läggs till i listan när övervakningen startar, utan någon händelse: en disk som monteras
+    /// precis när övervakningen kommer igång.
+    var mountsWhileStarting: [VolumeInfo] {
+        get { lock.withLock { pendingMounts } }
+        set { lock.withLock { pendingMounts = newValue } }
+    }
+    private var pendingMounts: [VolumeInfo] = []
+
     func start(onMount: @escaping @Sendable (VolumeInfo) -> Void,
                onWillUnmount: @escaping @Sendable (VolumeInfo) -> Void,
                onUnmount: @escaping @Sendable (String) -> Void) {
         lock.withLock {
+            list += pendingMounts
+            pendingMounts = []
             self.onMount = onMount
             self.onWillUnmount = onWillUnmount
             self.onUnmount = onUnmount
@@ -565,6 +575,24 @@ struct DiskSyncRunnerTests {
         let outcome = await s.sync(s.runner(process))
         #expect(outcome == .failed("fel"))
         #expect(process.calls.count == 1)
+    }
+
+    @Test func cancelDuringTheDryRunMovesNothingAndStartsNoRealRun() async throws {
+        let s = try Setup()
+        try s.write(s.destination, "borta.txt", "borta")
+        let process = ScriptedRsync([
+            ProcessResult(exitCode: 0, stdout: "*deleting borta.txt\n", stderr: ""),
+            ProcessResult(exitCode: 0, stdout: "", stderr: ""),
+        ])
+        // Avbryts medan torrkörningen pågår.
+        process.onRun = { number, _ in
+            if number == 1 { withUnsafeCurrentTask { $0?.cancel() } }
+        }
+        let outcome = await s.sync(s.runner(process))
+        #expect(outcome != .success)
+        #expect(process.calls.count == 1)
+        #expect(s.read(s.destination + "/borta.txt") == "borta")
+        #expect(!s.exists(s.raderat))
     }
 
     @Test func volumeGoneAfterTheMoveStopsBeforeTheRealRun() async throws {

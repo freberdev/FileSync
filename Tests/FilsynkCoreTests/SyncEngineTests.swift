@@ -75,6 +75,7 @@ private final class FakeWatchers: @unchecked Sendable {
     private var callbacks: [String: @Sendable () -> Void] = [:]
     private var activePaths: Set<String> = []
     private var stoppedPaths: Set<String> = []
+    private var creationCounts: [String: Int] = [:]
 
     private final class Watcher: FolderWatching, @unchecked Sendable {
         let path: String
@@ -86,7 +87,7 @@ private final class FakeWatchers: @unchecked Sendable {
 
     var factory: WatcherFactory {
         { [self] path, onChange in
-            lock.lock(); callbacks[path] = onChange; lock.unlock()
+            lock.lock(); callbacks[path] = onChange; creationCounts[path, default: 0] += 1; lock.unlock()
             return Watcher(path: path, owner: self)
         }
     }
@@ -99,6 +100,7 @@ private final class FakeWatchers: @unchecked Sendable {
     var active: Set<String> { lock.lock(); defer { lock.unlock() }; return activePaths }
     var stopped: Set<String> { lock.lock(); defer { lock.unlock() }; return stoppedPaths }
     var created: Set<String> { lock.lock(); defer { lock.unlock() }; return Set(callbacks.keys) }
+    func creations(_ path: String) -> Int { lock.lock(); defer { lock.unlock() }; return creationCounts[path] ?? 0 }
 
     /// Calls the latest `onChange` handed out for `path`, from another queue.
     func trigger(_ path: String) {
@@ -929,6 +931,12 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
         #expect(await absent.runner.callCount(Self.pathA, Self.diskA.id) == 0)
         #expect(await absent.runner.callCount(Self.pathA, "server") == 1)
         #expect(absent.recorder.state(of: Self.pathA, Self.diskA.id) == .notConnected)
+        // Not even an explicit request starts it.
+        await absent.engine.syncNow()
+        #expect(await eventually { await absent.runner.callCount(Self.pathA, "server") == 2 })
+        await settle()
+        #expect(await absent.runner.callCount(Self.pathA, Self.diskA.id) == 0)
+        #expect(absent.recorder.state(of: Self.pathA, Self.diskA.id) == .notConnected)
         await absent.engine.stop()
 
         // The disk is present: another disk being mounted starts nothing.
@@ -1028,7 +1036,7 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
     }
 
     @Test func folderOnMissingSourceVolumeHoldsAllItsDestinations() async {
-        let source = VolumeInfo(uuid: "S1", name: "Data", mountPath: "/filsynk-test/mnt/Data", format: .apfs, isSystem: false)
+        let source = VolumeInfo(uuid: "S1", name: "Data", mountPath: "/filsynk-test", format: .apfs, isSystem: false)
         var onData = Self.bothA
         onData.sourceVolumeUUID = "S1"
         let h = Self.make(Self.config([onData, Self.folderB]))
@@ -1130,6 +1138,149 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
         #expect(await runner.cancelledKeys == [FakeRunner.key(Self.pathA)])
         #expect(await runner.maxConcurrent[FakeRunner.key(Self.pathA, Self.diskA.id)] == 1)
         #expect(h.recorder.notices.isEmpty)
+        await h.engine.stop()
+    }
+    // MARK: Ejecting
+
+    static func ejecting(grace: TimeInterval) -> EngineTiming {
+        EngineTiming(quiet: 30, maxWait: 60, backoff: [60], noticeCheckInterval: 0.05, unmountGrace: grace)
+    }
+
+    @Test func refusedEjectSyncsTheDiskAgainAfterTheGrace() async {
+        let runner = FakeRunner(delay: 30)
+        let h = Self.make(Self.diskOnly([Self.diskOnlyA]), timing: Self.ejecting(grace: 0.5), runner: runner)
+        await h.engine.start()
+        #expect(await eventually { await runner.callCount(Self.pathA, Self.diskA.id) == 1 })
+        await runner.setDelay(0)
+
+        // The eject is refused: the disk stays mounted and no further event comes.
+        h.volumes.willUnmount(Self.volumeU1)
+        #expect(await eventually { await runner.cancelledKeys == [FakeRunner.key(Self.pathA, Self.diskA.id)] })
+        #expect(await eventually { h.recorder.state(of: Self.pathA, Self.diskA.id) == .notConnected })
+        #expect(await runner.callCount(Self.pathA, Self.diskA.id) == 1)
+
+        #expect(await eventually(timeout: 5) { await runner.callCount(Self.pathA, Self.diskA.id) == 2 })
+        #expect(await eventually { h.recorder.state(of: Self.pathA, Self.diskA.id) == .synced })
+        await h.engine.stop()
+    }
+
+    @Test func mountWhileEjectingStartsNothingOnTheLeavingDisk() async {
+        let runner = FakeRunner(delay: 30)
+        let h = Self.make(Self.diskOnly([Self.diskOnlyA]), timing: Self.ejecting(grace: 60), runner: runner)
+        await h.engine.start()
+        #expect(await eventually { await runner.callCount(Self.pathA, Self.diskA.id) == 1 })
+        await runner.setDelay(0)
+
+        h.volumes.willUnmount(Self.volumeU1)
+        #expect(await eventually { await runner.cancelledKeys.count == 1 })
+        // Another disk is mounted before the first one is gone; the list still holds the leaving one.
+        h.volumes.mount(VolumeInfo(uuid: "U2", name: "Other", mountPath: "/filsynk-test/mnt/Other", format: .apfs, isSystem: false))
+        await settle()
+        #expect(await runner.callCount(Self.pathA, Self.diskA.id) == 1)
+        #expect(h.recorder.state(of: Self.pathA, Self.diskA.id) == .notConnected)
+        await h.engine.stop()
+    }
+
+    @Test func normalEjectStaysNotConnectedAfterTheGrace() async {
+        let runner = FakeRunner(delay: 30)
+        let h = Self.make(Self.diskOnly([Self.diskOnlyA]), timing: Self.ejecting(grace: 0.1), runner: runner)
+        await h.engine.start()
+        #expect(await eventually { await runner.callCount(Self.pathA, Self.diskA.id) == 1 })
+        await runner.setDelay(0)
+
+        // The cancelled sync is owed at once; only the missing disk holds it back.
+        h.volumes.willUnmount(Self.volumeU1)
+        #expect(await eventually { await runner.cancelledKeys.count == 1 })
+        h.volumes.unmount(path: Self.volumeU1.mountPath)
+        #expect(await eventually { h.recorder.state(of: Self.pathA, Self.diskA.id) == .notConnected })
+        await settle(0.6)  // several times the grace
+        #expect(await runner.callCount(Self.pathA, Self.diskA.id) == 1)
+        #expect(h.recorder.state(of: Self.pathA, Self.diskA.id) == .notConnected)
+        await h.engine.stop()
+    }
+
+    @Test func volumeMountedWhileStartingIsSeen() async {
+        let volumes = FakeVolumes()
+        volumes.mountsWhileStarting = [Self.volumeU1]
+        let h = Self.make(Self.diskOnly([Self.diskOnlyA]), volumes: volumes)
+        await h.engine.start()
+        #expect(await eventually { await h.runner.callCount(Self.pathA, Self.diskA.id) == 1 })
+        #expect(await eventually { h.recorder.state(of: Self.pathA, Self.diskA.id) == .synced })
+        await h.engine.stop()
+    }
+
+    @Test func recordingTheSourceVolumeKeepsLastSuccess() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("filsynk-state-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = StateStore(url: dir.appendingPathComponent("state.json"))
+        let h = Self.make(Self.config([Self.bothA, Self.folderB]), state: store)
+        await h.engine.start()
+        #expect(await eventually {
+            h.recorder.state(of: Self.pathA) == .synced && h.recorder.state(of: Self.pathA, Self.diskA.id) == .synced
+                && h.recorder.state(of: Self.pathB) == .synced
+        })
+        let server = try #require(h.recorder.row(of: Self.pathA)?.lastSuccess)
+        let disk = try #require(h.recorder.row(of: Self.pathA, Self.diskA.id)?.lastSuccess)
+
+        // The folder's volume is recorded; that volume is not mounted, so the folder waits.
+        var recorded = Self.bothA
+        recorded.sourceVolumeUUID = "S1"
+        await h.engine.reload(Self.config([recorded, Self.folderB]))
+        #expect(await eventually { h.recorder.state(of: Self.pathA) == .notConnected })
+        #expect(h.recorder.row(of: Self.pathA)?.lastSuccess == server)
+        #expect(h.recorder.row(of: Self.pathA, Self.diskA.id)?.lastSuccess == disk)
+
+        // The next save keeps them (the restart syncs B once more, then the explicit request).
+        #expect(await eventually { await h.runner.callCount(Self.pathB) == 2 })
+        await h.engine.syncNow()
+        #expect(await eventually { await h.runner.callCount(Self.pathB) == 3 })
+        let keyA = FakeRunner.key(Self.pathA), keyDisk = FakeRunner.key(Self.pathA, Self.diskA.id)
+        #expect(await eventually { store.load().keys.sorted() == [keyA, keyDisk, FakeRunner.key(Self.pathB)].sorted() })
+        await h.engine.stop()
+    }
+
+    @Test func folderOnAnotherDiskThanItsRecordedVolumeIsHeld() async {
+        // Two disks named Data; the folder's path points into the one that is not its own.
+        let own = VolumeInfo(uuid: "S1", name: "Data", mountPath: "/filsynk-test/mnt/Data 1", format: .apfs, isSystem: false)
+        let other = VolumeInfo(uuid: "S2", name: "Data", mountPath: "/filsynk-test/mnt/Data", format: .apfs, isSystem: false)
+        let path = "/filsynk-test/mnt/Data/A"
+        let folder = FolderConfig(path: path, destinations: [.server(path: "/srv/A"), Self.diskA], sourceVolumeUUID: "S1")
+        let h = Self.make(Self.config([folder, Self.folderB]), volumes: FakeVolumes([Self.volumeU1, own, other]))
+        await h.engine.start()
+        #expect(await eventually { await h.runner.callCount(Self.pathB) == 1 })
+        await h.engine.syncNow()
+        #expect(await eventually { await h.runner.callCount(Self.pathB) == 2 })
+        await settle()
+        #expect(await h.runner.callCount(path) == 0)
+        #expect(h.recorder.state(of: path) == .notConnected)
+        #expect(h.recorder.state(of: path, Self.diskA.id) == .notConnected)
+        await h.engine.stop()
+    }
+
+    @Test func sourceVolumeMountedAgainGetsANewWatcher() async {
+        let source = VolumeInfo(uuid: "S1", name: "Data", mountPath: "/filsynk-test", format: .apfs, isSystem: false)
+        var onData = Self.bothA
+        onData.sourceVolumeUUID = "S1"
+        let h = Self.make(Self.config([onData]), volumes: FakeVolumes([Self.volumeU1, source]))
+        await h.engine.start()
+        #expect(await eventually {
+            h.recorder.state(of: Self.pathA) == .synced && h.recorder.state(of: Self.pathA, Self.diskA.id) == .synced
+        })
+        #expect(h.watchers.creations(Self.pathA) == 1)
+
+        h.volumes.willUnmount(source)
+        h.volumes.unmount(path: source.mountPath)
+        #expect(await eventually { h.recorder.state(of: Self.pathA) == .notConnected })
+        h.volumes.mount(source)
+        #expect(await eventually { await h.runner.callCount(Self.pathA, "server") == 2 })
+        #expect(h.watchers.creations(Self.pathA) == 2)
+        #expect(h.watchers.stopped.contains(Self.pathA))
+        #expect(h.watchers.active == [Self.pathA])
+
+        // The new watcher is the one that reports changes.
+        #expect(await eventually { h.recorder.state(of: Self.pathA) == .synced })
+        h.watchers.trigger(Self.pathA)
+        #expect(await eventually { await h.runner.callCount(Self.pathA, "server") == 3 })
         await h.engine.stop()
     }
 }
