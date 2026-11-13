@@ -376,7 +376,7 @@ Ytterligare ett prov kör hela kedjan mot riktiga volymer, utan någon fysisk di
 FILSYNK_DISK_IMAGE_TESTS=1 swift test --filter DiskImageTests
 ```
 
-Avbilderna monteras utan `-nobrowse`, eftersom Filsynk inte ser dolda volymer. Det tar ungefär en minut och en avbild kan synas en stund i Finder.
+Avbilderna monteras utan `-nobrowse`, eftersom Filsynk inte ser dolda volymer. Det tar ungefär en minut och en avbild kan synas en stund i Finder. Om en körning avbryts innan den hunnit städa: leta efter `filsynk-diskprov-` i utskriften från `hdiutil info` och koppla loss just den enheten med `hdiutil detach <enhet>`.
 
 ## Checklista
 

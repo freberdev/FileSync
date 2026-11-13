@@ -93,10 +93,13 @@ private final class Rig: @unchecked Sendable {
               let entities = (plist as? [String: Any])?["system-entities"] as? [[String: Any]] else {
             throw ImageError(description: "hdiutil attach gav ingen läsbar lista: \(result.stdout)")
         }
-        // Hela enheter har namnet disk<N>. Avbildens egen har lägst nummer; en syntetiserad
-        // APFS-enhet kommer efter den och försvinner med den.
+        // Enheten måste också vara en som `hdiutil info` säger hör till just den här avbildsfilen.
+        // Hela enheter heter disk<N>; avbildens egen har lägst nummer, en syntetiserad APFS-enhet
+        // kommer efter den och försvinner med den.
+        let reported = Set(try await devices(ofImageFile: file))
         let wholeDisks = entities.compactMap { $0["dev-entry"] as? String }.compactMap { dev -> (Int, String)? in
-            guard dev.hasPrefix("/dev/disk"), let n = Int(dev.dropFirst("/dev/disk".count)) else { return nil }
+            guard reported.contains(dev), dev.hasPrefix("/dev/disk"),
+                  let n = Int(dev.dropFirst("/dev/disk".count)) else { return nil }
             return (n, dev)
         }
         let device = wholeDisks.min { $0.0 < $1.0 }?.1
@@ -112,15 +115,69 @@ private final class Rig: @unchecked Sendable {
     func detach(_ image: AttachedImage) async throws {
         var last = ""
         for attempt in 0..<8 {
-            let result = try await process.run("/usr/bin/hdiutil", ["detach", image.device])
-            if result.exitCode == 0 {
-                attachedDevices.removeAll { $0 == image.device }
-                return
+            switch try await detachIfOwned(image.device, force: false) {
+            case .detached, .alreadyGone: return
+            case .refused(let why): last = why
             }
-            last = result.stderr
             try await Task.sleep(for: .seconds(attempt < 3 ? 1 : 2))
         }
         throw ImageError(description: "hdiutil detach \(image.device): \(last)")
+    }
+
+    private struct ListedImage {
+        let path: String
+        let devices: [String]
+    }
+
+    private static func resolved(_ path: String) -> String {
+        URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+    }
+
+    /// Alla inkopplade avbilder enligt `hdiutil info -plist`, med sina enheter.
+    private func listedImages() async throws -> [ListedImage] {
+        let result = try await process.run("/usr/bin/hdiutil", ["info", "-plist"])
+        guard result.exitCode == 0,
+              let plist = try? PropertyListSerialization.propertyList(from: Data(result.stdout.utf8), format: nil),
+              let images = (plist as? [String: Any])?["images"] as? [[String: Any]] else {
+            throw ImageError(description: "hdiutil info gav ingen läsbar lista: \(result.stderr)")
+        }
+        return images.map { image in
+            let entities = image["system-entities"] as? [[String: Any]] ?? []
+            return ListedImage(
+                path: image["image-path"] as? String ?? "",
+                devices: entities.compactMap { $0["dev-entry"] as? String })
+        }
+    }
+
+    private func devices(ofImageFile file: URL) async throws -> [String] {
+        let wanted = Self.resolved(file.path)
+        return try await listedImages().filter { Self.resolved($0.path) == wanted }.flatMap(\.devices)
+    }
+
+    enum DetachOutcome {
+        case detached, alreadyGone
+        /// Enheten hör inte till den här provkörningen, eller hdiutil vägrade.
+        case refused(String)
+    }
+
+    /// Kopplar bara loss en enhet som `hdiutil info` just nu säger hör till en avbild under provets
+    /// egen katalog. Saknas enheten är den redan borta; hör den till något annat rörs den inte.
+    func detachIfOwned(_ device: String, force: Bool) async throws -> DetachOutcome {
+        let ownRoot = Self.resolved(root.path) + "/"
+        let holders = try await listedImages().filter { $0.devices.contains(device) }
+        if holders.isEmpty {
+            attachedDevices.removeAll { $0 == device }
+            return .alreadyGone
+        }
+        guard holders.allSatisfy({ Self.resolved($0.path).hasPrefix(ownRoot) }) else {
+            return .refused("\(device) hör till \(holders.map(\.path)), inte till provet")
+        }
+        let result = try await process.run("/usr/bin/hdiutil", force ? ["detach", "-force", device] : ["detach", device])
+        if result.exitCode == 0 {
+            attachedDevices.removeAll { $0 == device }
+            return .detached
+        }
+        return .refused(result.stderr)
     }
 
     /// Volymen som `SystemVolumeMonitor` ser för avbilden.
@@ -161,18 +218,34 @@ private final class Rig: @unchecked Sendable {
         await created.start()
     }
 
-    /// Stoppar motorn och kopplar loss allt som är kvar, sedan tas katalogen bort.
+    /// Stoppar motorn och kopplar loss allt som är kvar. Katalogen tas bara bort när varje avbild är
+    /// loskopplad; annars lämnas den kvar och problemen säger var och vilka enheter som är kvar.
+    /// Körs fristående från testets uppgift, så att också ett avbrutet test städas.
     func tearDown() async -> [String] {
+        await Task.detached { await self.tearDownUncancelled() }.value
+    }
+
+    private func tearDownUncancelled() async -> [String] {
         var problems: [String] = []
         if let engine { await engine.stop() }
-        try? await Task.sleep(for: .seconds(1))
+        pause(1)
         for device in attachedDevices {
-            if let result = try? await process.run("/usr/bin/hdiutil", ["detach", "-force", device]),
-               result.exitCode == 0 { continue }
-            problems.append("kunde inte koppla loss \(device)")
+            var outcome: DetachOutcome = .refused("")
+            for _ in 0..<5 {
+                do { outcome = try await detachIfOwned(device, force: true) } catch {
+                    outcome = .refused("\(error)")
+                }
+                if case .refused = outcome { pause(1) } else { break }
+            }
+            if case .refused(let why) = outcome { problems.append("\(device): \(why)") }
         }
-        attachedDevices = []
-        try? FileManager.default.removeItem(at: root)
+        if attachedDevices.isEmpty {
+            try? FileManager.default.removeItem(at: root)
+        } else {
+            problems.append(
+                "katalogen \(root.path) lämnades kvar; enheter som fortfarande är inkopplade: "
+                + "\(attachedDevices.joined(separator: ", ")). Koppla loss dem med hdiutil detach <enhet>.")
+        }
         return problems
     }
 
@@ -228,6 +301,30 @@ private func entries(_ dir: String) -> [String] {
         .filter { ![".fseventsd", ".Spotlight-V100", ".Trashes", ".TemporaryItems", ".DS_Store"].contains($0) }
         .sorted()
 }
+
+/// Som `entries`, men ett läsfel är ett fel i testet och ger inte en tom lista.
+private func listed(_ dir: String) throws -> [String] {
+    try FileManager.default.contentsOfDirectory(atPath: dir)
+        .filter { ![".fseventsd", ".Spotlight-V100", ".Trashes", ".TemporaryItems", ".DS_Store"].contains($0) }
+        .sorted()
+}
+
+/// Namnen i en mapp som råa bytes, som readdir ger dem.
+private func rawNames(_ path: String) throws -> [[UInt8]] {
+    guard let dir = opendir(path) else { throw CocoaError(.fileReadUnknown) }
+    defer { closedir(dir) }
+    var result: [[UInt8]] = []
+    while let e = readdir(dir) {
+        let name = withUnsafeBytes(of: e.pointee.d_name) { raw in
+            Array(raw.prefix { $0 != 0 })
+        }
+        if name != Array(".".utf8), name != Array("..".utf8) { result.append(name) }
+    }
+    return result
+}
+
+/// Väntar utan att bero på uppgiftens avbrott.
+private func pause(_ seconds: TimeInterval) { usleep(UInt32(seconds * 1_000_000)) }
 
 private func text(_ path: String) -> String? { try? String(contentsOfFile: path, encoding: .utf8) }
 
@@ -307,6 +404,12 @@ struct DiskImageTests {
             try rig.writeRaw(rootFile, "rot")
             for name in inner { try rig.writeRaw("\(folder)/\(name)", "inne") }
 
+            // Förutsättningen: namnen ligger förkomponerade (NFC) på Macen.
+            let sourceTop = try rawNames(rig.source.path)
+            #expect(Set(sourceTop) == [Array(rootFile.utf8), Array(folder.utf8)], "källans namn: \(sourceTop)")
+            let sourceInner = try rawNames(rig.source.path + "/" + folder)
+            #expect(Set(sourceInner) == Set(inner.map { Array($0.utf8) }), "källans namn i mappen: \(sourceInner)")
+
             @Sendable func counts(_ dir: String, _ wanted: String) -> Int {
                 entries(dir).filter { $0.precomposedStringWithCanonicalMapping == wanted }.count
             }
@@ -327,12 +430,12 @@ struct DiskImageTests {
             await rig.engine?.syncNow()
             #expect(await rig.waitForSyncCycle(after: mark), "syncNow gav ingen synkcykel")
 
-            let after = entries(backup)
+            let after = try listed(backup)
             #expect(!after.contains("Raderat"), "Raderat finns på disken: \(bytes(after))")
             #expect(counts(backup, rootFile) == 1, "rotfilen: \(bytes(after))")
             #expect(counts(backup, folder) == 1, "mappen: \(bytes(after))")
             let folderOnDisk = try #require(after.first { $0.precomposedStringWithCanonicalMapping == folder })
-            let innerOnDisk = entries(backup + "/" + folderOnDisk)
+            let innerOnDisk = try listed(backup + "/" + folderOnDisk)
             #expect(innerOnDisk.count == inner.count, "filerna i mappen: \(bytes(innerOnDisk))")
             for name in inner { #expect(counts(backup + "/" + folderOnDisk, name) == 1, "\(bytes(innerOnDisk))") }
             #expect(rig.recorder.errors.isEmpty, "fel i raden: \(rig.recorder.errors)")
@@ -355,7 +458,8 @@ struct DiskImageTests {
 
             #expect(rig.recorder.errors.isEmpty, "fel i raden: \(rig.recorder.errors)")
             #expect(rig.recorder.lastState == .synced, "status \(String(describing: rig.recorder.lastState))")
-            #expect(!FileManager.default.fileExists(atPath: backup + "/Raderat"),
+            var raderat = stat()
+            #expect(lstat(backup + "/Raderat", &raderat) != 0 && errno == ENOENT,
                     "något flyttades till Raderat: \(entries(backup + "/Raderat"))")
             #expect(text(backup + "/mal.txt") == "innehåll")
             // Länken är kvar på Macen och är en länk också på disken.
@@ -414,7 +518,8 @@ struct DiskImageTests {
             // Ett ändrat innehåll hos källan synkas till den första, inte till den andra.
             try rig.write("b.txt", "b")
             #expect(await eventually { text(backup + "/b.txt") == "b" })
-            #expect(entries(second.mountPath).isEmpty, "på den andra avbilden: \(entries(second.mountPath))")
+            let onSecond = try listed(second.mountPath)
+            #expect(onSecond.isEmpty, "på den andra avbilden: \(onSecond)")
 
             // När den första är borta nås ingenting; den andra får fortfarande inget.
             try await rig.detach(first)
@@ -422,7 +527,8 @@ struct DiskImageTests {
                     "status \(String(describing: rig.recorder.lastState))")
             try rig.write("c.txt", "c")
             try await Task.sleep(for: .seconds(4))
-            #expect(entries(second.mountPath).isEmpty, "på den andra avbilden: \(entries(second.mountPath))")
+            let stillOnSecond = try listed(second.mountPath)
+            #expect(stillOnSecond.isEmpty, "på den andra avbilden: \(stillOnSecond)")
             #expect(rig.recorder.lastState == .notConnected, "status \(String(describing: rig.recorder.lastState))")
             #expect(rig.recorder.errors.isEmpty, "fel i raden: \(rig.recorder.errors)")
         }
