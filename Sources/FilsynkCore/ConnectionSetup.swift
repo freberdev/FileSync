@@ -74,10 +74,10 @@ public struct ConnectionSetup: Sendable {
     }
 
     /// Creates the folder on the server if needed and returns its absolute, symlink-resolved path
-    /// together with the remote home directory.
+    /// together with the remote home directory, both resolved and as the server writes it.
     public func resolveRemotePath(
         _ entered: String, server: String, identityFile: String
-    ) async throws -> (path: String, home: String) {
+    ) async throws -> (path: String, home: String, logicalHome: String) {
         if server.isEmpty || !Config.isSafeServer(server) { throw ConnectionError.unsafeServer }
         if !Config.isSafeRemotePath(entered) { throw ConnectionError.unsafePath(entered) }
 
@@ -89,9 +89,10 @@ public struct ConnectionSetup: Sendable {
         } else {
             quoted = entered
         }
-        // Prints the home directory, then the resolved folder; the folder is refused if it is the
-        // home directory or above it (a --delete sync there would move authorized_keys away).
-        let command = "cd && pwd -P && mkdir -p \"\(quoted)\" && cd \"\(quoted)\" && pwd -P"
+        // Prints the home directory (resolved, then as written), then the resolved folder; the folder
+        // is refused if it is a home directory or above one (a --delete sync there would move
+        // authorized_keys away).
+        let command = "cd && pwd -P && pwd && mkdir -p \"\(quoted)\" && cd \"\(quoted)\" && pwd -P"
         let result = try await remote(server: server, identityFile: identityFile, command: command)
 
         guard result.exitCode == 0 else {
@@ -101,22 +102,25 @@ public struct ConnectionSetup: Sendable {
         let lines = result.stdout.split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
-        guard lines.count >= 2, let home = lines.dropLast().last, let line = lines.last,
-              home.hasPrefix("/"), line.hasPrefix("/")
-        else { throw ConnectionError.unexpectedOutput(lines.last ?? "") }
+        guard lines.count >= 3, let line = lines.last else { throw ConnectionError.unexpectedOutput(lines.last ?? "") }
+        let home = lines[lines.count - 3], logicalHome = lines[lines.count - 2]
+        guard home.hasPrefix("/"), logicalHome.hasPrefix("/"), line.hasPrefix("/")
+        else { throw ConnectionError.unexpectedOutput(line) }
 
         let pathParts = line.split(separator: "/")
-        let homeParts = home.split(separator: "/")
-        if pathParts.count <= homeParts.count, Array(homeParts.prefix(pathParts.count)) == pathParts {
-            throw ConnectionError.pathTooBroad
+        for candidate in [home, logicalHome] {
+            let homeParts = candidate.split(separator: "/")
+            if pathParts.count <= homeParts.count, Array(homeParts.prefix(pathParts.count)) == pathParts {
+                throw ConnectionError.pathTooBroad
+            }
         }
-        return (line, home)
+        return (line, home, logicalHome)
     }
 
-    /// The remote home directory with symlinks resolved.
-    public func remoteHome(server: String, identityFile: String) async throws -> String {
+    /// The remote home directory, with symlinks resolved and as the server writes it.
+    public func remoteHome(server: String, identityFile: String) async throws -> (home: String, logicalHome: String) {
         if server.isEmpty || !Config.isSafeServer(server) { throw ConnectionError.unsafeServer }
-        let result = try await remote(server: server, identityFile: identityFile, command: "cd && pwd -P")
+        let result = try await remote(server: server, identityFile: identityFile, command: "cd && pwd -P && pwd")
         guard result.exitCode == 0 else {
             throw ConnectionError.remoteCommandFailed(
                 OutcomeClassifier.classify(exitCode: result.exitCode, stderr: result.stderr))
@@ -124,8 +128,9 @@ public struct ConnectionSetup: Sendable {
         let lines = result.stdout.split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
-        guard let home = lines.last, home.hasPrefix("/") else { throw ConnectionError.unexpectedOutput(lines.last ?? "") }
-        return home
+        guard lines.count >= 2, lines[lines.count - 2].hasPrefix("/"), lines[lines.count - 1].hasPrefix("/")
+        else { throw ConnectionError.unexpectedOutput(lines.last ?? "") }
+        return (lines[lines.count - 2], lines[lines.count - 1])
     }
 
     /// Parses e.g. "rsync  version 3.2.7  protocol version 31". Returns nil for openrsync and anything else.

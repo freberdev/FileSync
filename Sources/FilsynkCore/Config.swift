@@ -27,6 +27,9 @@ public struct Config: Codable, Equatable, Sendable {
     public var verifiedServer: String
     /// The home directory (symlinks resolved) that `verifiedServer` reported in that test.
     public var verifiedHome: String
+    /// The same home directory as the server prints it without resolving symlinks (e.g. `/home/u`
+    /// where `verifiedHome` is `/var/home/u`). Empty when unknown.
+    public var verifiedLogicalHome: String
 
     public static let builtInExcludes: [String] = [
         ".DS_Store", "._*", ".localized", ".Trash*", ".Spotlight-V100", ".fseventsd",
@@ -41,7 +44,8 @@ public struct Config: Codable, Equatable, Sendable {
         folders: [FolderConfig] = [],
         rsyncPath: String = "/usr/bin/rsync",
         verifiedServer: String = "",
-        verifiedHome: String = ""
+        verifiedHome: String = "",
+        verifiedLogicalHome: String = ""
     ) {
         self.server = server
         self.identityFile = identityFile
@@ -52,13 +56,14 @@ public struct Config: Codable, Equatable, Sendable {
         self.rsyncPath = rsyncPath
         self.verifiedServer = verifiedServer
         self.verifiedHome = verifiedHome
+        self.verifiedLogicalHome = verifiedLogicalHome
     }
 
     /// True when `server` is the one the remote paths were resolved on and its home directory is known.
     public var isVerified: Bool { !server.isEmpty && server == verifiedServer && !verifiedHome.isEmpty }
 
     private enum CodingKeys: String, CodingKey {
-        case server, identityFile, quietSeconds, maxWaitSeconds, exclude, folders, rsyncPath, verifiedServer, verifiedHome
+        case server, identityFile, quietSeconds, maxWaitSeconds, exclude, folders, rsyncPath, verifiedServer, verifiedHome, verifiedLogicalHome
     }
 
     public init(from decoder: Decoder) throws {
@@ -72,6 +77,7 @@ public struct Config: Codable, Equatable, Sendable {
         self.rsyncPath = try c.decodeIfPresent(String.self, forKey: .rsyncPath) ?? "/usr/bin/rsync"
         self.verifiedServer = try c.decodeIfPresent(String.self, forKey: .verifiedServer) ?? ""
         self.verifiedHome = try c.decodeIfPresent(String.self, forKey: .verifiedHome) ?? ""
+        self.verifiedLogicalHome = try c.decodeIfPresent(String.self, forKey: .verifiedLogicalHome) ?? ""
     }
 
     public static func initial(home: String) -> Config {
@@ -152,11 +158,17 @@ public struct Config: Codable, Equatable, Sendable {
         guard absolute.hasPrefix("/") else { return nil }
         let parts = Config.remoteComponents(absolute)
         if parts.isEmpty { return .remotePathTooBroad(path) }
-        guard !verifiedHome.isEmpty else { return nil }
-        let homeParts = Config.remoteComponents(verifiedHome)
-        // The home directory or above it: a --delete sync there would move authorized_keys away.
-        if Config.isPrefix(parts, of: homeParts) { return .remotePathTooBroad(path) }
-        if Config.isPrefix(homeParts + [".ssh"], of: parts) { return .remotePathNotAllowed(path) }
+        return Config.homeIssue(path, parts: parts, homes: [verifiedHome, verifiedLogicalHome])
+    }
+
+    /// The home directory or above it, or `~/.ssh` and below, judged against each known home
+    /// (with and without symlinks resolved): a --delete sync there would move authorized_keys away.
+    static func homeIssue(_ path: String, parts: [String], homes: [String]) -> ConfigIssue? {
+        for home in homes where !home.isEmpty {
+            let homeParts = Config.remoteComponents(home)
+            if Config.isPrefix(parts, of: homeParts) { return .remotePathTooBroad(path) }
+            if Config.isPrefix(homeParts + [".ssh"], of: parts) { return .remotePathNotAllowed(path) }
+        }
         return nil
     }
 

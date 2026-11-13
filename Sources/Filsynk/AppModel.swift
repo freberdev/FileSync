@@ -158,6 +158,10 @@ struct PendingFolder: Equatable {
         isBusy = true
         defer { isBusy = false }
         issue = nil
+        if let message = flow.addRejection(to: config, localPath: localPath, remoteEntered: remoteEntered) {
+            issue = message
+            return false
+        }
         let report = await Task.detached { FolderInspector.inspect(path: localPath) }.value
         switch FolderAddStep.after(report, confirmed: false) {
         case .confirm:

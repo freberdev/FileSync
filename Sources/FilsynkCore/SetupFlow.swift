@@ -19,7 +19,7 @@ public struct SetupFlow: Sendable {
     /// ensureKey, check, and (only when the check is `.ok`) resolve every folder that is not ready.
     /// Any other result returns `config` unchanged. If a resolve fails, the result is `.failed`
     /// and that folder stays unresolved; folders resolved before it stay resolved.
-    /// `verifiedServer` and `verifiedHome` are set together, and only when everything succeeded.
+    /// `verifiedServer`, `verifiedHome` and `verifiedLogicalHome` are set together, and only when everything succeeded.
     public func connect(_ config: Config) async -> (result: ConnectionResult, config: Config) {
         do {
             _ = try await setup.ensureKey(identityFile: config.identityFile)
@@ -32,20 +32,20 @@ public struct SetupFlow: Sendable {
         // Paths resolved on another server mean nothing here: resolve them all again.
         let resolveAll = config.verifiedServer != config.server
         var updated = config
-        var home: String?
+        var homes: (home: String, logicalHome: String)?
         for index in updated.folders.indices where resolveAll || !updated.folders[index].isReady {
             do {
                 let resolved = try await setup.resolveRemotePath(
                     updated.folders[index].remotePath, server: updated.server, identityFile: updated.identityFile)
                 updated.folders[index].remotePath = resolved.path
-                home = resolved.home
+                homes = (resolved.home, resolved.logicalHome)
             } catch {
                 return (.failed(message(for: error)), updated)
             }
         }
-        if home == nil {
+        if homes == nil {
             do {
-                home = try await setup.remoteHome(server: updated.server, identityFile: updated.identityFile)
+                homes = try await setup.remoteHome(server: updated.server, identityFile: updated.identityFile)
             } catch ConnectionError.remoteCommandFailed(let outcome) {
                 switch outcome {
                 case .unreachable: return (.unreachable, updated)
@@ -58,19 +58,29 @@ public struct SetupFlow: Sendable {
             }
         }
         updated.verifiedServer = updated.server
-        updated.verifiedHome = home ?? ""
+        updated.verifiedHome = homes?.home ?? ""
+        updated.verifiedLogicalHome = homes?.logicalHome ?? ""
         return (result, updated)
+    }
+
+    /// What can be judged about adding the folder without the server and without looking at the
+    /// folder itself: the message to show, or nil when nothing speaks against it. Starts no process.
+    public func addRejection(to config: Config, localPath: String, remoteEntered: String) -> String? {
+        let entered = remoteEntered.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !config.isVerified { return "Testa anslutningen först." }
+
+        // Nested or unsafe paths.
+        var candidate = config
+        candidate.folders.append(FolderConfig(path: localPath, remotePath: entered))
+        return candidate.validate().first?.message
     }
 
     /// Resolves the remote path and appends the folder. Never returns an invalid config.
     public func addFolder(to config: Config, localPath: String, remoteEntered: String) async -> AddFolderResult {
         let entered = remoteEntered.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !config.isVerified { return .rejected("Testa anslutningen först.") }
-
-        // Everything knowable without the server: nested or unsafe paths.
-        var candidate = config
-        candidate.folders.append(FolderConfig(path: localPath, remotePath: entered))
-        if let issue = candidate.validate().first { return .rejected(issue.message) }
+        if let message = addRejection(to: config, localPath: localPath, remoteEntered: entered) {
+            return .rejected(message)
+        }
 
         let resolved: String
         do {

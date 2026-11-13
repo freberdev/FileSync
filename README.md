@@ -28,7 +28,7 @@ Lösenordet skriver du bara till `ssh-copy-id`, direkt till `ssh`. Appen ser det
 
 Skriv sedan serveradressen i Inställningar och tryck **Testa anslutning**. Testet kontrollerar att inloggning fungerar utan fråga, att serverns rsync är version 3 eller senare, och skapar och slår upp mapparna på servern.
 
-- **Inget synkas mot en server förrän testet lyckats mot exakt den adressen.** Ändrar du adressen måste du testa igen. Testet sparar också serverns hemkatalog (`verifiedHome` i `config.json`).
+- **Inget synkas mot en server förrän testet lyckats mot exakt den adressen.** Ändrar du adressen måste du testa igen. Testet sparar också serverns hemkatalog, både med och utan uppslagna symlänkar (`verifiedHome` och `verifiedLogicalHome` i `config.json`).
 - En mapp på servern som är hemkatalogen, `/` eller något ovanför hemkatalogen nekas, liksom `~/.ssh` och allt under den och sökvägar med `.` eller `..`. Det gäller även om `config.json` ändras för hand.
 - Okända värdnycklar godkänns aldrig automatiskt; `ssh-copy-id` gör värden känd på vanligt sätt.
 
@@ -129,7 +129,7 @@ Gör detta en gång. Anteckna det som inte stämmer. `användare@server` och `/h
 
 3. **Inställningar** (ta först bort `~/Library/Application Support/Filsynk/config.json`):
    1. Inställningarna öppnas av sig själva med raden `~/Sync → ~/Sync`, tom adress och en kort vägledning under Server.
-   2. Skriv `användare@server` och tryck Testa anslutning: `✓ Ansluten, rsync 3.x.y`. `config.json` har nu `remotePath` `/home/användare/Sync`, `verifiedServer` och `verifiedHome`. Kolumnen "På servern" visar `~/Sync`.
+   2. Skriv `användare@server` och tryck Testa anslutning: `✓ Ansluten, rsync 3.x.y`. `config.json` har nu `remotePath` `/home/användare/Sync`, `verifiedServer`, `verifiedHome` och `verifiedLogicalHome`. Kolumnen "På servern" visar `~/Sync`.
    3. Ange en adress som inte finns (`x@192.0.2.1`): `Servern nås inte.` inom cirka 10 sekunder. Ange `x@h;ls`: rött fel, ingenting sparas.
    4. Lägg till en mapp som ligger inuti `~/Sync`: rött fel, ingenting sparas. Ange `~` eller `~/R&D` som mapp på servern: nekas.
    5. Lägg till en mapp med filer som bara finns i iCloud (eller en egen mapp `Raderat` i toppnivån): varningen visas med Lägg till ändå och Avbryt. Avbryt sparar ingenting; Lägg till ändå lägger till mappen och synken startar först då.

@@ -186,6 +186,40 @@ extension ConfigTests {
         #expect(ConfigIssue.remotePathNotAllowed("/home/u/.ssh").message.contains(".ssh"))
     }
 
+    private func twoHomes(_ remotePaths: [String], logical: String = "/home/u") -> Config {
+        var c = verified(remotePaths, home: "/var/home/u")
+        c.verifiedLogicalHome = logical
+        return c
+    }
+
+    @Test func homeRulesApplyToTheUnresolvedHomeToo() {
+        for bad in ["/home/u", "/home", "/var/home/u", "/var/home", "/"] {
+            #expect(twoHomes([bad]).validate(home: "/Users/x").contains(.remotePathTooBroad(bad)), "\(bad)")
+        }
+        for bad in ["/home/u/.ssh", "/home/u/.ssh/x", "/var/home/u/.ssh", "/var/home/u/.ssh/x"] {
+            #expect(twoHomes([bad]).validate(home: "/Users/x").contains(.remotePathNotAllowed(bad)), "\(bad)")
+        }
+        for good in ["/home/u/Sync", "/var/home/u/Sync"] {
+            #expect(twoHomes([good]).validate(home: "/Users/x") == [], "\(good)")
+        }
+    }
+
+    @Test func emptyLogicalHomeBehavesAsBefore() {
+        #expect(twoHomes(["/home/u"], logical: "").validate(home: "/Users/x") == [])
+        #expect(twoHomes(["/home/u/.ssh"], logical: "").validate(home: "/Users/x") == [])
+        #expect(twoHomes(["/var/home/u"], logical: "").validate(home: "/Users/x").contains(.remotePathTooBroad("/var/home/u")))
+    }
+
+    @Test func logicalHomeDefaultsToEmptyAndDoesNotAffectVerification() throws {
+        let old = try JSONDecoder().decode(
+            Config.self, from: Data(#"{"server":"u@h","folders":[],"verifiedServer":"u@h","verifiedHome":"/home/u"}"#.utf8))
+        #expect(old.verifiedLogicalHome == "" && old.isVerified)
+        var c = Config(server: "u@h", verifiedServer: "u@h", verifiedHome: "/var/home/u")
+        c.verifiedLogicalHome = "/home/u"
+        let back = try JSONDecoder().decode(Config.self, from: JSONEncoder().encode(c))
+        #expect(back == c && back.verifiedLogicalHome == "/home/u")
+    }
+
     @Test func remotePathBelowOrOutsideHomeIsAccepted() {
         #expect(verified(["/home/u/Sync"]).validate(home: "/Users/x") == [])
         #expect(verified(["/srv/backup/x"]).validate(home: "/Users/x") == [])
