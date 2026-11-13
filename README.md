@@ -116,20 +116,128 @@ Därefter ligger tillstånden kvar mellan byggen.
 
 ## Anslutning
 
-Appen hanterar aldrig serverns lösenord. Den använder en egen SSH-nyckel. Kör detta en gång i Terminal (`användare@server` är din egen adress):
+Appen loggar in på servern med en egen SSH-nyckel och hanterar aldrig serverns lösenord. Nyckeln läggs upp en gång, i fem steg. I exemplen står `användare@server` för din egen adress, till exempel `anna@192.168.1.10`.
+
+### Förutsättningar
+
+- Servern kör en SSH-server och har rsync version 3 eller senare. På Ubuntu och Debian installeras båda med `sudo apt install openssh-server rsync`.
+- Du kan logga in på servern från Macen, med lösenord eller med en nyckel du redan har.
+
+### 1. Kontrollera att servern går att nå
+
+```bash
+ssh användare@server 'echo ansluten; rsync --version | head -1'
+```
+
+Första gången frågar `ssh` om serverns värdnyckel ska godkännas. Svara `yes`. Därefter skriver du lösenordet. Utskriften ska sluta så här:
+
+```
+ansluten
+rsync  version 3.2.7  protocol version 31
+```
+
+Står det `openrsync` eller en version under 3 fungerar inte servern som mål.
+
+### 2. Skapa nyckeln
 
 ```bash
 ssh-keygen -t ed25519 -N "" -C filsynk -f ~/.ssh/filsynk_ed25519
+```
+
+- `-t ed25519` väljer nyckeltyp.
+- `-N ""` ger en nyckel utan lösenfras, vilket krävs för att synken ska gå obevakad.
+- `-C filsynk` sätter en kommentar som gör nyckeln lätt att känna igen på servern.
+- `-f` anger var nyckeln sparas.
+
+Kommandot skapar två filer: den privata nyckeln `~/.ssh/filsynk_ed25519`, som aldrig lämnar Macen, och den publika `~/.ssh/filsynk_ed25519.pub`, som läggs på servern. Finns filen redan frågar `ssh-keygen` innan något skrivs över; svara då `n` och använd den befintliga.
+
+Appen skapar nyckeln själv när du trycker Testa anslutning, om den saknas. Steget kan alltså hoppas över.
+
+### 3. Lägg den publika nyckeln på servern
+
+```bash
 ssh-copy-id -i ~/.ssh/filsynk_ed25519.pub användare@server
 ```
 
-Lösenordet skriver du bara till `ssh-copy-id`, direkt till `ssh`. Appen ser det aldrig. Nyckeln skapas också av "Testa anslutning" om den saknas.
+Här skriver du serverns lösenord en sista gång, direkt till `ssh`. Appen ser det aldrig. Kommandot lägger till en rad i `~/.ssh/authorized_keys` på servern.
 
-Skriv sedan serveradressen i Inställningar och tryck **Testa anslutning**. Testet kontrollerar att inloggning fungerar utan fråga, att serverns rsync är version 3 eller senare, och skapar och slår upp mapparna på servern.
+Om `ssh-copy-id` inte går att använda gör det här samma sak:
+
+```bash
+cat ~/.ssh/filsynk_ed25519.pub | ssh användare@server 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'
+```
+
+### 4. Kontrollera att nyckeln fungerar utan frågor
+
+Det här är samma inloggning som appen gör:
+
+```bash
+ssh -i ~/.ssh/filsynk_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 användare@server 'echo ansluten; rsync --version | head -1'
+```
+
+Utskriften ska vara densamma som i steg 1, utan att något lösenord efterfrågas. `BatchMode=yes` gör att `ssh` misslyckas i stället för att fråga, precis som i appen.
+
+### 5. Anslut i appen
+
+Skriv serveradressen i Inställningar och tryck **Testa anslutning**. Testet kontrollerar att inloggningen fungerar utan fråga och att serverns rsync är version 3 eller senare, och det skapar och slår upp mapparna på servern. Lyckas det står det `✓ Ansluten, rsync 3.x.y`.
 
 - **Inget synkas mot en server förrän testet lyckats mot exakt den adressen.** Ändrar du adressen måste du testa igen. Testet sparar också serverns hemkatalog, både med och utan uppslagna symlänkar (`verifiedHome` och `verifiedLogicalHome` i `config.json`).
 - En mapp på servern som är hemkatalogen, `/` eller något ovanför hemkatalogen nekas, liksom `~/.ssh` och allt under den och sökvägar med `.` eller `..`. Det gäller även om `config.json` ändras för hand.
-- Okända värdnycklar godkänns aldrig automatiskt; `ssh-copy-id` gör värden känd på vanligt sätt.
+- Okända värdnycklar godkänns aldrig automatiskt. Steg 1 gör servern känd på vanligt sätt.
+
+### Annan port, annat namn eller åtkomst utifrån
+
+Appen anropar det vanliga `ssh`, som läser `~/.ssh/config`. Lägg in servern där om den lyssnar på en annan port än 22, eller om du vill kunna nå den under samma namn både hemma och borta:
+
+```
+Host minserver
+    HostName 192.168.1.10
+    User anna
+    Port 2222
+```
+
+Skriv sedan `minserver` som adress i appen. Kontrollera först med `ssh minserver` att uppgifterna stämmer.
+
+Att nå en server på hemmanätet utifrån kräver VPN eller liknande, och det ligger utanför appen. Går servern inte att nå köas ändringarna tills den gör det.
+
+### Se, byta eller dra in nyckeln
+
+Se att nyckeln ligger på servern:
+
+```bash
+ssh användare@server 'grep filsynk ~/.ssh/authorized_keys'
+```
+
+Se nyckelns fingeravtryck på Macen:
+
+```bash
+ssh-keygen -lf ~/.ssh/filsynk_ed25519.pub
+```
+
+Dra in nyckeln, så att den inte längre kan logga in. Kommandot tar bort raden på servern och sparar den gamla filen som `authorized_keys.bak`:
+
+```bash
+ssh användare@server "sed -i.bak '/ filsynk\$/d' ~/.ssh/authorized_keys"
+```
+
+Ta därefter bort nyckeln på Macen:
+
+```bash
+rm ~/.ssh/filsynk_ed25519 ~/.ssh/filsynk_ed25519.pub
+```
+
+Byta nyckel gör du genom att dra in den gamla och gå igenom steg 2 till 5 igen.
+
+### Felsökning av anslutningen
+
+| Det här händer | Orsak och åtgärd |
+|---|---|
+| Appen visar "Servern accepterar inte nyckeln ännu" | Den publika nyckeln ligger inte på servern, eller så är adressens användarnamn fel. Gör steg 3 och 4. |
+| Steg 4 ger `Permission denied (publickey,password)` | Samma sak. Kontrollera också rättigheterna på servern: `~/.ssh` ska vara `700` och `~/.ssh/authorized_keys` `600`, och hemkatalogen får inte vara skrivbar för andra. |
+| `Host key verification failed` | Servern är okänd för Macen, eller har bytt värdnyckel efter en ominstallation. Logga in en gång för hand med `ssh användare@server`. Har servern bytt nyckel tar du först bort den gamla med `ssh-keygen -R server`. |
+| Appen visar "Servern nås inte" | Fel adress, servern är avstängd eller så är du på ett annat nät. `nc -z -G 5 server 22` visar om porten går att nå. |
+| Appen visar "Servern behöver rsync 3 eller senare" | Installera rsync på servern, se Förutsättningar. |
+| Inget hjälper | Lägg till `-v` i kommandot i steg 4. Då skriver `ssh` ut varje steg i inloggningen. |
 
 ### Tillåtna tecken
 
