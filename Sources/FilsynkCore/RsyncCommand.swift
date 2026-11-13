@@ -28,7 +28,8 @@ public enum RsyncCommand {
 
     public static func sshArguments(identityFile: String) -> [String] {
         ["-i", Config.expandTilde(identityFile),
-         "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
+         "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+         "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4"]
     }
 
     public static func excludeFileContents(_ config: Config) -> String {

@@ -9,6 +9,7 @@ public final class SyncRunner: SyncRunning, @unchecked Sendable {
     private let process: ProcessRunning
     private let target: SyncTarget
     private let timeZone: TimeZone
+    private let temporaryDirectory: URL
     private let log: (@Sendable (String) -> Void)?
     private let lock = NSLock()
     private var lastTimestamp: Date?
@@ -17,11 +18,13 @@ public final class SyncRunner: SyncRunning, @unchecked Sendable {
         process: ProcessRunning,
         target: SyncTarget = .ssh,
         timeZone: TimeZone = .current,
+        temporaryDirectory: URL = FileManager.default.temporaryDirectory,
         log: (@Sendable (String) -> Void)? = nil
     ) {
         self.process = process
         self.target = target
         self.timeZone = timeZone
+        self.temporaryDirectory = temporaryDirectory
         self.log = log
     }
 
@@ -43,12 +46,12 @@ public final class SyncRunner: SyncRunning, @unchecked Sendable {
 
         let timestamp = RsyncCommand.timestamp(nextTimestamp(for: now), timeZone: timeZone)
 
-        let excludeURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("filsynk-exclude-\(UUID().uuidString)")
+        let excludeURL = temporaryDirectory.appendingPathComponent("filsynk-exclude-\(UUID().uuidString)")
         do {
             try RsyncCommand.excludeFileContents(config).write(to: excludeURL, atomically: true, encoding: .utf8)
         } catch {
-            return .failed("Kunde inte starta rsync: \(error.localizedDescription)")
+            log?("\(folder.path): kunde inte skriva undantagsfilen: \(error)")
+            return .failed("Kunde inte förbereda synken")
         }
         defer { try? FileManager.default.removeItem(at: excludeURL) }
 
@@ -59,7 +62,8 @@ public final class SyncRunner: SyncRunning, @unchecked Sendable {
             let result = try await process.run(invocation.executable, invocation.arguments)
             return OutcomeClassifier.classify(exitCode: result.exitCode, stderr: result.stderr)
         } catch {
-            return .failed("Kunde inte starta rsync: \(error)")
+            log?("\(folder.path): kunde inte starta rsync: \(error)")
+            return .failed("Kunde inte starta rsync: \(error.localizedDescription)")
         }
     }
 

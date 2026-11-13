@@ -100,8 +100,23 @@ struct SyncRunnerTests {
         let dir = try makeSourceDir()
         let fake = FakeProcess()
         fake.error = LaunchError()
-        let o = await SyncRunner(process: fake).sync(folder: .init(path: dir, remotePath: "/r"), config: config, now: .now)
-        #expect(o == .failed("Kunde inte starta rsync: boom"))
+        let sink = LogSink()
+        let o = await SyncRunner(process: fake, log: { sink.add($0) })
+            .sync(folder: .init(path: dir, remotePath: "/r"), config: config, now: .now)
+        #expect(o == .failed("Kunde inte starta rsync: \(LaunchError().localizedDescription)"))
+        #expect(sink.lines.contains { $0.contains("kunde inte starta rsync: boom") })
+    }
+
+    @Test func excludeFileFailureHasItsOwnText() async throws {
+        let dir = try makeSourceDir()
+        let fake = FakeProcess()
+        let sink = LogSink()
+        let missing = URL(fileURLWithPath: "/nonexistent-filsynk-\(UUID().uuidString)")
+        let o = await SyncRunner(process: fake, temporaryDirectory: missing, log: { sink.add($0) })
+            .sync(folder: .init(path: dir, remotePath: "/r"), config: config, now: .now)
+        #expect(o == .failed("Kunde inte förbereda synken"))
+        #expect(fake.calls.isEmpty)
+        #expect(sink.lines.contains { $0.contains("undantagsfilen") })
     }
 
     @Test func excludeFileExistsDuringRunAndIsRemovedAfter() async throws {

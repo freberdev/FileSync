@@ -15,7 +15,7 @@ import Testing
     #expect(inv.arguments == ["-a", "--delete", "--backup",
         "--backup-dir=/home/u/Sync/Raderat/2026-11-17_143205", "--exclude=/Raderat/", "--exclude-from=/tmp/ex",
         "--partial-dir=.filsynk-partial", "--timeout=60", "--stats",
-        "-e", "ssh -i /k/id -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10",
+        "-e", "ssh -i /k/id -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4",
         "/Users/x/Sync/", "u@h:/home/u/Sync/"])
 }
 
@@ -50,5 +50,6 @@ import Testing
 @Test func sshArgumentsExpandTilde() {
     let args = RsyncCommand.sshArguments(identityFile: "~/.ssh/k")
     #expect(args == ["-i", NSHomeDirectory() + "/.ssh/k", "-o", "IdentitiesOnly=yes",
-                     "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"])
+                     "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+                     "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4"])
 }
