@@ -43,6 +43,7 @@ struct PendingFolder: Equatable {
     @ObservationIgnored private let log: FileLog
     @ObservationIgnored private let notifier: Notifier
     @ObservationIgnored private let flow: SetupFlow
+    @ObservationIgnored private let volumes = SystemVolumeMonitor()
 
     init(store: ConfigStore = ConfigStore(url: ConfigStore.defaultURL), log: FileLog = FileLog(url: FileLog.defaultURL)) {
         self.store = store
@@ -204,8 +205,9 @@ struct PendingFolder: Equatable {
         issue = apply(SetupFlow.removeFolder(folder, from: config))
     }
 
+    /// The status of the folder's server destination.
     func state(of folder: FolderConfig) -> FolderStatus? {
-        status.folders.first { $0.path == folder.path }
+        status.folders.first { $0.path == folder.path && $0.destination?.isServer == true }
     }
 
     func syncNow() {
@@ -239,7 +241,10 @@ struct PendingFolder: Equatable {
         guard engine == nil else { return }
         let log = self.log
         let notifier = self.notifier
-        let runner = SyncRunner(process: SystemProcessRunner(), log: { log.write($0) })
+        // One runner of each kind for the life of the app: each keeps its own timestamps.
+        let runner = DestinationRunner(
+            server: SyncRunner(process: SystemProcessRunner(), log: { log.write($0) }),
+            disk: DiskSyncRunner(process: SystemProcessRunner(), volumes: volumes, log: { log.write($0) }))
         let engine = SyncEngine(
             config: config, runner: runner,
             makeWatcher: { path, onChange in FolderWatcher(path: path, onChange: onChange) },

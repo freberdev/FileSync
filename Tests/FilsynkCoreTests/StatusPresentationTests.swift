@@ -15,13 +15,13 @@ import Testing
     private func schedule() -> FolderSchedule { FolderSchedule(quiet: 60, maxWait: 600) }
 
     private func status(_ state: FolderState, lastSuccess: Date? = nil, paused: Bool = false, configError: String? = nil) -> EngineStatus {
-        EngineStatus(folders: [FolderStatus(path: "~/Sync", state: state, lastSuccess: lastSuccess)],
+        EngineStatus(folders: [FolderStatus(path: "~/Sync", destination: nil, state: state, lastSuccess: lastSuccess)],
                      isPaused: paused, configError: configError)
     }
 
     @Test func folderLabelForEachState() {
         func label(_ state: FolderState, _ last: Date? = nil) -> String {
-            StatusPresentation.folderLabel(FolderStatus(path: "~/Sync", state: state, lastSuccess: last), timeZone: utc)
+            StatusPresentation.folderLabel(FolderStatus(path: "~/Sync", destination: nil, state: state, lastSuccess: last), timeZone: utc)
         }
         #expect(label(.synced, utcTime(hour: 9, minute: 5)) == "✓ 09:05")
         #expect(label(.synced) == "✓")
@@ -68,8 +68,8 @@ import Testing
         let early = utcTime(hour: 8, minute: 0)
         let late = early.addingTimeInterval(3 * 3600)
         let s = EngineStatus(folders: [
-            FolderStatus(path: "~/A", state: .synced, lastSuccess: late),
-            FolderStatus(path: "~/B", state: .synced, lastSuccess: early),
+            FolderStatus(path: "~/A", destination: nil, state: .synced, lastSuccess: late),
+            FolderStatus(path: "~/B", destination: nil, state: .synced, lastSuccess: early),
         ], isPaused: false, configError: nil)
         #expect(StatusPresentation.headline(s, timeZone: utc) == "Allt synkat · 11:00")
     }
@@ -80,13 +80,13 @@ import Testing
 
     @Test func overallPrecedence() {
         let errAndSyncing = EngineStatus(folders: [
-            FolderStatus(path: "~/A", state: .syncing, lastSuccess: nil),
-            FolderStatus(path: "~/B", state: .error("x"), lastSuccess: nil),
+            FolderStatus(path: "~/A", destination: nil, state: .syncing, lastSuccess: nil),
+            FolderStatus(path: "~/B", destination: nil, state: .error("x"), lastSuccess: nil),
         ], isPaused: false, configError: nil)
         #expect(errAndSyncing.overall == .error("x"))
 
         var paused = errAndSyncing
-        paused.folders = [FolderStatus(path: "~/A", state: .syncing, lastSuccess: nil)]
+        paused.folders = [FolderStatus(path: "~/A", destination: nil, state: .syncing, lastSuccess: nil)]
         paused.isPaused = true
         #expect(paused.overall == .paused)
 
@@ -95,15 +95,15 @@ import Testing
         #expect(cfg.overall == .error("Kunde inte läsa konfigurationen"))
 
         let order = EngineStatus(folders: [
-            FolderStatus(path: "~/A", state: .pending, lastSuccess: nil),
-            FolderStatus(path: "~/B", state: .waitingForServer, lastSuccess: nil),
+            FolderStatus(path: "~/A", destination: nil, state: .pending, lastSuccess: nil),
+            FolderStatus(path: "~/B", destination: nil, state: .waitingForServer, lastSuccess: nil),
         ], isPaused: false, configError: nil)
         #expect(order.overall == .waitingForServer)
 
         // One folder not set up outweighs everything but a config error.
         var partly = EngineStatus(folders: [
-            FolderStatus(path: "~/A", state: .synced, lastSuccess: t0),
-            FolderStatus(path: "~/B", state: .notConfigured, lastSuccess: nil),
+            FolderStatus(path: "~/A", destination: nil, state: .synced, lastSuccess: t0),
+            FolderStatus(path: "~/B", destination: nil, state: .notConfigured, lastSuccess: nil),
         ], isPaused: false, configError: nil)
         #expect(partly.overall == .notConfigured)
         #expect(StatusPresentation.headline(partly, timeZone: utc) == "Inte inställd")
@@ -145,5 +145,20 @@ import Testing
         #expect(StatusPresentation.displayPath("/Users/x", home: "/Users/x") == "~")
         #expect(StatusPresentation.displayPath("/Users/xy/Sync", home: "/Users/x") == "/Users/xy/Sync")
         #expect(StatusPresentation.displayPath("/Volumes/Data", home: "/Users/x") == "/Volumes/Data")
+    }
+    @Test func destinationLabels() {
+        #expect(StatusPresentation.destinationLabel(.server(path: "/home/u/Filsynk/A"), serverHome: "/home/u") == "Server: ~/Filsynk/A")
+        #expect(StatusPresentation.destinationLabel(.disk(.init(volumeUUID: "U1", volumeName: "HDD", path: "Filsynk/A")), serverHome: "") == "HDD: Filsynk/A")
+        // Without a known home the path is shown as it is.
+        #expect(StatusPresentation.destinationLabel(.server(path: "/srv/A"), serverHome: "") == "Server: /srv/A")
+    }
+
+    @Test func rowIdentityIsFolderAndDestination() {
+        let disk = Destination.disk(.init(volumeUUID: "U1", volumeName: "HDD", path: "Filsynk/A"))
+        let server = FolderStatus(path: "/a", destination: .server(path: "/srv/a"), state: .synced, lastSuccess: nil)
+        let onDisk = FolderStatus(path: "/a", destination: disk, state: .synced, lastSuccess: nil)
+        #expect(server.id == "/a|server")
+        #expect(onDisk.id == "/a|" + disk.id)
+        #expect(server.destinationID == "server")
     }
 }

@@ -52,7 +52,7 @@ struct SyncIntegrationTests {
     private static let base = Date(timeIntervalSince1970: 1_700_000_000)
     private func run(_ n: Int, source src: URL? = nil) async -> SyncOutcome {
         let folder = FolderConfig(path: (src ?? source).path, remotePath: dest.path)
-        return await runner.sync(folder: folder, config: config, now: Self.base.addingTimeInterval(Double(n) * 10))
+        return await runner.sync(folder: folder, destination: .server(path: dest.path), config: config, now: Self.base.addingTimeInterval(Double(n) * 10))
     }
 
     private func write(_ name: String, _ text: String, in dir: URL? = nil) throws {

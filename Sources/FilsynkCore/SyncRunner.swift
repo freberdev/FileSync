@@ -1,10 +1,30 @@
 import Foundation
 
 public protocol SyncRunning: Sendable {
-    func sync(folder: FolderConfig, config: Config, now: Date) async -> SyncOutcome
+    func sync(folder: FolderConfig, destination: Destination, config: Config, now: Date) async -> SyncOutcome
 }
 
-/// Performs one sync of one folder: guard, build command, run rsync, classify.
+/// Hands each sync to the runner for its kind of destination.
+public struct DestinationRunner: SyncRunning {
+    private let server: SyncRunner
+    private let disk: DiskSyncRunner
+
+    public init(server: SyncRunner, disk: DiskSyncRunner) {
+        self.server = server
+        self.disk = disk
+    }
+
+    public func sync(folder: FolderConfig, destination: Destination, config: Config, now: Date) async -> SyncOutcome {
+        switch destination {
+        case .server:
+            return await server.sync(folder: folder, destination: destination, config: config, now: now)
+        case .disk(let location):
+            return await disk.sync(folder: folder, disk: location, config: config, now: now)
+        }
+    }
+}
+
+/// Performs one sync of one folder to the server: guard, build command, run rsync, classify.
 public final class SyncRunner: SyncRunning, @unchecked Sendable {
     private let process: ProcessRunning
     private let target: SyncTarget
@@ -28,7 +48,10 @@ public final class SyncRunner: SyncRunning, @unchecked Sendable {
         self.log = log
     }
 
-    public func sync(folder: FolderConfig, config: Config, now: Date) async -> SyncOutcome {
+    public func sync(folder: FolderConfig, destination: Destination, config: Config, now: Date) async -> SyncOutcome {
+        guard case .server(let remotePath) = destination else { return .failed("Fel sorts mål") }
+        let folder = FolderConfig(
+            path: folder.path, destinations: [.server(path: remotePath)], sourceVolumeUUID: folder.sourceVolumeUUID)
         let started = Date()
         let outcome = await perform(folder: folder, config: config, now: now)
         let seconds = String(format: "%.1f", Date().timeIntervalSince(started))

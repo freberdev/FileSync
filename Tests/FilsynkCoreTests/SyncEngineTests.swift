@@ -4,11 +4,13 @@ import Testing
 
 // MARK: - Fakes
 
-/// Records every sync, answers with queued outcomes per folder (default `.success`) and can
-/// hold each sync for `delay` seconds. Measures concurrency per folder and in total.
+/// Records every sync, answers with queued outcomes per destination or folder (default `.success`)
+/// and can hold each sync for `delay` seconds. Measures concurrency per destination and in total.
+/// A destination is named by `key(path, destinationID)`.
 private actor FakeRunner: SyncRunning {
-    private(set) var calls: [(path: String, at: Date)] = []
+    private(set) var calls: [(path: String, destinationID: String, at: Date)] = []
     private(set) var cancelled: [String] = []
+    /// Per destination key.
     private(set) var maxConcurrent: [String: Int] = [:]
     private(set) var maxTotalConcurrent = 0
     private var current: [String: Int] = [:]
@@ -17,20 +19,30 @@ private actor FakeRunner: SyncRunning {
 
     init(delay: TimeInterval = 0) { self.delay = delay }
 
-    func setOutcomes(_ list: [SyncOutcome], for path: String) { outcomes[path] = list }
+    static func key(_ path: String, _ destinationID: String = "server") -> String { path + "|" + destinationID }
+
+    /// For every destination of `path`, or only the one named by `destinationID`.
+    func setOutcomes(_ list: [SyncOutcome], for path: String, destinationID: String? = nil) {
+        outcomes[destinationID.map { Self.key(path, $0) } ?? path] = list
+    }
     func setDelay(_ value: TimeInterval) { delay = value }
 
     func callCount(_ path: String) -> Int { calls.filter { $0.path == path }.count }
+    func callCount(_ path: String, _ destinationID: String) -> Int {
+        calls.filter { $0.path == path && $0.destinationID == destinationID }.count
+    }
     var totalCalls: Int { calls.count }
+    var currentTotal: Int { current.values.reduce(0, +) }
     func callDates(_ path: String) -> [Date] { calls.filter { $0.path == path }.map(\.at) }
 
-    func sync(folder: FolderConfig, config: Config, now: Date) async -> SyncOutcome {
+    func sync(folder: FolderConfig, destination: Destination, config: Config, now: Date) async -> SyncOutcome {
         let path = folder.path
-        calls.append((path, Date()))
-        current[path, default: 0] += 1
-        maxConcurrent[path] = max(maxConcurrent[path] ?? 0, current[path]!)
-        maxTotalConcurrent = max(maxTotalConcurrent, current.values.reduce(0, +))
-        defer { current[path]! -= 1 }
+        let key = Self.key(path, destination.id)
+        calls.append((path, destination.id, Date()))
+        current[key, default: 0] += 1
+        maxConcurrent[key] = max(maxConcurrent[key] ?? 0, current[key]!)
+        maxTotalConcurrent = max(maxTotalConcurrent, currentTotal)
+        defer { current[key]! -= 1 }
 
         if delay > 0 {
             try? await Task.sleep(for: .seconds(delay))
@@ -42,10 +54,12 @@ private actor FakeRunner: SyncRunning {
                 return .failed("rsync avbröts")
             }
         }
-        if var queue = outcomes[path], !queue.isEmpty {
-            let outcome = queue.removeFirst()
-            outcomes[path] = queue
-            return outcome
+        for name in [key, path] {
+            if var queue = outcomes[name], !queue.isEmpty {
+                let outcome = queue.removeFirst()
+                outcomes[name] = queue
+                return outcome
+            }
         }
         return .success
     }
@@ -155,8 +169,8 @@ private final class Recorder: @unchecked Sendable {
     var notices: [Notice] { lock.lock(); defer { lock.unlock() }; return noticeList }
     var latest: EngineStatus? { statuses.last }
 
-    func state(of path: String) -> FolderState? {
-        latest?.folders.first { $0.path == path }?.state
+    func state(of path: String, _ destinationID: String = "server") -> FolderState? {
+        latest?.folders.first { $0.path == path && $0.destinationID == destinationID }?.state
     }
 }
 
@@ -192,6 +206,9 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
     }
     static let folderA = FolderConfig(path: pathA, remotePath: "/srv/A")
     static let folderB = FolderConfig(path: pathB, remotePath: "/srv/B")
+    static let diskA = Destination.disk(DiskLocation(volumeUUID: "U1", volumeName: "HDD", path: "Filsynk/A"))
+    /// Folder A on the server and on a disk.
+    static let bothA = FolderConfig(path: pathA, destinations: [.server(path: "/srv/A"), diskA])
 
     fileprivate struct Harness {
         let engine: SyncEngine
@@ -370,8 +387,8 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
         await h.engine.reload(changed)
         #expect(await eventually(timeout: 5) { await runner.callCount(Self.pathA) >= 3 })
         await settle()
-        #expect(await runner.maxConcurrent[Self.pathA] == 1)
-        #expect(await runner.maxConcurrent[Self.pathB] == 1)
+        #expect(await runner.maxConcurrent[FakeRunner.key(Self.pathA)] == 1)
+        #expect(await runner.maxConcurrent[FakeRunner.key(Self.pathB)] == 1)
         // Different folders may run at the same time.
         #expect(await runner.maxTotalConcurrent == 2)
         await h.engine.stop()
@@ -425,7 +442,7 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
         await h.engine.start()
 
         let expected = Notice.repeatedFailure(
-            folder: StatusPresentation.displayPath(Self.pathA, home: NSHomeDirectory()), message: "x")
+            folder: StatusPresentation.displayPath(Self.pathA, home: NSHomeDirectory()) + " → Server: /srv/A", message: "x")
         #expect(await eventually { h.recorder.notices.contains(expected) })
         #expect(await eventually { await runner.callCount(Self.pathA) == 4 })  // retry after the third failure succeeds
         await settle()  // several periodic notice checks (0.05)
@@ -585,7 +602,7 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
         #expect(await eventually(timeout: 5) { h.recorder.state(of: Self.pathA) == .synced })
         await settle()
         #expect(await runner.cancelled.isEmpty)
-        #expect(await runner.maxConcurrent[Self.pathA] == 1)
+        #expect(await runner.maxConcurrent[FakeRunner.key(Self.pathA)] == 1)
         #expect(await runner.callCount(Self.pathA) == 2)
         #expect(await h.engine.schedule(of: Self.pathA)?.lastSuccess != nil)
         await h.engine.stop()
@@ -604,7 +621,7 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
         #expect(await eventually(timeout: 5) { await runner.callCount(Self.pathA) == 2 })
         #expect(await eventually(timeout: 5) { h.recorder.state(of: Self.pathA) == .synced })
         await settle()
-        #expect(await runner.maxConcurrent[Self.pathA] == 1)
+        #expect(await runner.maxConcurrent[FakeRunner.key(Self.pathA)] == 1)
         #expect(await runner.callCount(Self.pathA) == 2)
         #expect(h.recorder.notices.isEmpty)
         await h.engine.stop()
@@ -649,6 +666,197 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
 
         await h.engine.reload(Self.config([Self.folderA]))
         #expect(await eventually { await runner.callCount(Self.pathA) == 3 })
+        await h.engine.stop()
+    }
+    // MARK: One schedule per destination
+
+    @Test func oneRowPerDestination() async {
+        let h = Self.make(Self.config([Self.bothA, Self.folderB]))
+        let rows = h.recorder.latest?.folders ?? []
+        #expect(rows.map(\.path) == [Self.pathA, Self.pathA, Self.pathB])
+        #expect(rows.map(\.destination) == [.server(path: "/srv/A"), Self.diskA, .server(path: "/srv/B")])
+        #expect(Set(rows.map(\.id)).count == 3)
+    }
+
+    @Test func folderWithoutDestinationHasOneUnconfiguredRow() async {
+        let bare = FolderConfig(path: Self.pathB, destinations: [])
+        let h = Self.make(Self.config([Self.folderA, bare]))
+        let rows = h.recorder.latest?.folders ?? []
+        #expect(rows.map(\.path) == [Self.pathA, Self.pathB])
+        #expect(rows.last?.destination == nil)
+        #expect(rows.map(\.state) == [.notConfigured, .notConfigured])
+    }
+
+    @Test func changeMakesAllDestinationsOfTheFolderSync() async {
+        let h = Self.make(Self.config([Self.bothA]))
+        await h.engine.start()
+        #expect(await eventually {
+            let server = await h.runner.callCount(Self.pathA, "server")
+            let disk = await h.runner.callCount(Self.pathA, Self.diskA.id)
+            return server == 1 && disk == 1
+        })
+        #expect(h.watchers.created == [Self.pathA])
+
+        h.watchers.trigger(Self.pathA)
+        #expect(await eventually {
+            let server = await h.runner.callCount(Self.pathA, "server")
+            let disk = await h.runner.callCount(Self.pathA, Self.diskA.id)
+            return server == 2 && disk == 2
+        })
+        #expect(await eventually {
+            h.recorder.state(of: Self.pathA) == .synced && h.recorder.state(of: Self.pathA, Self.diskA.id) == .synced
+        })
+        await h.engine.stop()
+    }
+
+    @Test func destinationsOfOneFolderMayRunConcurrently() async {
+        let runner = FakeRunner(delay: 0.3)
+        let h = Self.make(Self.config([Self.bothA]), runner: runner)
+        await h.engine.start()
+        #expect(await eventually { await runner.currentTotal == 2 })
+        #expect(await eventually {
+            h.recorder.state(of: Self.pathA) == .syncing && h.recorder.state(of: Self.pathA, Self.diskA.id) == .syncing
+        })
+        await h.engine.stop()
+    }
+
+    @Test func neverTwoSyncsOfTheSameDestination() async {
+        let runner = FakeRunner(delay: 0.2)
+        let h = Self.make(Self.config([Self.bothA]), runner: runner)
+        await h.engine.start()
+        #expect(await eventually { await runner.totalCalls == 2 })
+        for _ in 0..<5 {
+            h.watchers.trigger(Self.pathA)
+            await h.engine.syncNow()
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(await eventually(timeout: 5) {
+            let server = await runner.callCount(Self.pathA, "server")
+            let disk = await runner.callCount(Self.pathA, Self.diskA.id)
+            return server >= 2 && disk >= 2
+        })
+        // Cancelled syncs must have ended before the same destination runs again.
+        var changed = Self.config([Self.bothA])
+        changed.exclude = ["*.tmp"]
+        await h.engine.reload(changed)
+        #expect(await eventually(timeout: 5) {
+            let server = await runner.callCount(Self.pathA, "server")
+            let disk = await runner.callCount(Self.pathA, Self.diskA.id)
+            return server >= 3 && disk >= 3
+        })
+        await settle()
+        #expect(await runner.maxConcurrent[FakeRunner.key(Self.pathA)] == 1)
+        #expect(await runner.maxConcurrent[FakeRunner.key(Self.pathA, Self.diskA.id)] == 1)
+        #expect(await runner.maxTotalConcurrent == 2)
+        await h.engine.stop()
+    }
+
+    @Test func diskDestinationSyncsWithoutVerifiedServer() async {
+        let diskOnly = FolderConfig(path: Self.pathB, destinations: [
+            .disk(DiskLocation(volumeUUID: "U1", volumeName: "HDD", path: "Filsynk/B")),
+        ])
+        let config = Self.config([Self.bothA, diskOnly], server: "", verifiedServer: "", verifiedHome: "")
+        #expect(config.validate().isEmpty)
+        let network = FakeNetwork(withholdsFirstUpdate: true)  // network state unknown
+        let h = Self.make(config, network: network)
+        await h.engine.start()
+        #expect(await eventually {
+            let a = await h.runner.callCount(Self.pathA, Self.diskA.id)
+            let b = await h.runner.callCount(Self.pathB)
+            return a == 1 && b == 1
+        })
+        await settle()
+        #expect(await h.runner.callCount(Self.pathA, "server") == 0)
+        #expect(h.recorder.state(of: Self.pathA) == .notConfigured)
+        #expect(h.recorder.state(of: Self.pathA, Self.diskA.id) == .synced)
+        #expect(h.watchers.created == [Self.pathA, Self.pathB])
+        await h.engine.stop()
+    }
+
+    @Test func meteredNetworkHoldsOnlyServerDestinations() async {
+        let network = FakeNetwork(metered: true)
+        let h = Self.make(Self.config([Self.bothA]), network: network)
+        await h.engine.start()
+        #expect(await eventually { await h.runner.callCount(Self.pathA, Self.diskA.id) == 1 })
+        h.watchers.trigger(Self.pathA)
+        #expect(await eventually { await h.runner.callCount(Self.pathA, Self.diskA.id) == 2 })
+        await settle()
+        #expect(await h.runner.callCount(Self.pathA, "server") == 0)
+        #expect(h.recorder.state(of: Self.pathA) == .pending)
+        #expect(h.recorder.state(of: Self.pathA, Self.diskA.id) == .synced)
+
+        await h.engine.syncNow()
+        #expect(await eventually { await h.runner.callCount(Self.pathA, "server") == 1 })
+        await h.engine.stop()
+    }
+
+    @Test func failureOfOneDestinationDoesNotAffectTheOther() async {
+        // Second backoff step is long, so the server stays waiting.
+        let timing = EngineTiming(quiet: 0.05, maxWait: 0.5, backoff: [0.05, 60], noticeCheckInterval: 0.05)
+        let runner = FakeRunner()
+        await runner.setOutcomes([.unreachable, .unreachable], for: Self.pathA, destinationID: "server")
+        let h = Self.make(Self.config([Self.bothA]), timing: timing, runner: runner)
+        await h.engine.start()
+        #expect(await eventually { await runner.callCount(Self.pathA, "server") == 2 })
+        #expect(await eventually {
+            h.recorder.state(of: Self.pathA) == .waitingForServer
+                && h.recorder.state(of: Self.pathA, Self.diskA.id) == .synced
+        })
+        await settle()
+        #expect(await runner.callCount(Self.pathA, Self.diskA.id) == 1)
+        #expect(await h.engine.schedule(of: Self.pathA, destinationID: Self.diskA.id)?.failureCount == 0)
+        #expect(await h.engine.schedule(of: Self.pathA)?.failureCount == 2)
+        await h.engine.stop()
+    }
+
+    @Test func reloadKeepsScheduleOfUnchangedDestinationOnly() async {
+        let h = Self.make(Self.config([Self.bothA]))
+        await h.engine.start()
+        #expect(await eventually {
+            h.recorder.state(of: Self.pathA) == .synced && h.recorder.state(of: Self.pathA, Self.diskA.id) == .synced
+        })
+        await h.engine.setPaused(true)
+        let serverSuccess = await h.engine.schedule(of: Self.pathA)?.lastSuccess
+        let diskSuccess = await h.engine.schedule(of: Self.pathA, destinationID: Self.diskA.id)?.lastSuccess
+        #expect(serverSuccess != nil)
+        #expect(diskSuccess != nil)
+
+        // Another folder on the disk: the server destination keeps its schedule.
+        let movedDisk = Destination.disk(DiskLocation(volumeUUID: "U1", volumeName: "HDD", path: "Filsynk/A2"))
+        await h.engine.reload(Self.config([FolderConfig(path: Self.pathA, destinations: [.server(path: "/srv/A"), movedDisk])]))
+        #expect(await h.engine.schedule(of: Self.pathA)?.lastSuccess == serverSuccess)
+        #expect(await h.engine.schedule(of: Self.pathA, destinationID: movedDisk.id)?.lastSuccess == nil)
+
+        // Back to the first disk folder, then another server: only the disk destination keeps its schedule.
+        await h.engine.reload(Self.config([Self.bothA]))
+        await h.engine.setPaused(false)
+        #expect(await eventually {
+            h.recorder.state(of: Self.pathA) == .synced && h.recorder.state(of: Self.pathA, Self.diskA.id) == .synced
+        })
+        await h.engine.setPaused(true)
+        let diskAgain = await h.engine.schedule(of: Self.pathA, destinationID: Self.diskA.id)?.lastSuccess
+        #expect(diskAgain != nil)
+        await h.engine.reload(Self.config([Self.bothA], server: "other@server"))
+        #expect(await h.engine.schedule(of: Self.pathA)?.lastSuccess == nil)
+        #expect(await h.engine.schedule(of: Self.pathA, destinationID: Self.diskA.id)?.lastSuccess == diskAgain)
+
+        // A new server path for the folder: likewise.
+        await h.engine.reload(Self.config([FolderConfig(path: Self.pathA, destinations: [.server(path: "/srv/A3"), Self.diskA])],
+                                          server: "other@server"))
+        #expect(await h.engine.schedule(of: Self.pathA, destinationID: Self.diskA.id)?.lastSuccess == diskAgain)
+        await h.engine.stop()
+    }
+
+    @Test func noticeNamesTheDestination() async {
+        let runner = FakeRunner()
+        await runner.setOutcomes([.failed("x"), .failed("x"), .failed("x")], for: Self.pathA, destinationID: Self.diskA.id)
+        let h = Self.make(Self.config([Self.bothA]), runner: runner)
+        await h.engine.start()
+        let expected = Notice.repeatedFailure(
+            folder: StatusPresentation.displayPath(Self.pathA, home: NSHomeDirectory()) + " → HDD: Filsynk/A", message: "x")
+        #expect(await eventually { h.recorder.notices.contains(expected) })
+        await settle()
+        #expect(h.recorder.notices == [expected])
         await h.engine.stop()
     }
 }

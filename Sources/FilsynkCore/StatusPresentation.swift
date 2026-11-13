@@ -4,14 +4,20 @@ public enum FolderState: Equatable, Sendable {
     case notConfigured, synced, pending, syncing, waitingForServer, error(String)
 }
 
+/// The state of one destination of a folder.
 public struct FolderStatus: Equatable, Sendable, Identifiable {
-    public var id: String { path }
+    public var id: String { path + "|" + destinationID }
     public var path: String
+    public var destinationID: String
+    /// Nil for a folder without destinations.
+    public var destination: Destination?
     public var state: FolderState
     public var lastSuccess: Date?
 
-    public init(path: String, state: FolderState, lastSuccess: Date?) {
+    public init(path: String, destination: Destination?, state: FolderState, lastSuccess: Date?) {
         self.path = path
+        self.destinationID = destination?.id ?? ""
+        self.destination = destination
         self.state = state
         self.lastSuccess = lastSuccess
     }
@@ -96,6 +102,16 @@ public enum StatusPresentation {
         let prefix = home.hasSuffix("/") ? home : home + "/"
         if path.hasPrefix(prefix) { return "~/" + path.dropFirst(prefix.count) }
         return path
+    }
+
+    /// "Server: ~/Filsynk/A" with the server's home shown as "~", or "HDD: Filsynk/A".
+    public static func destinationLabel(_ destination: Destination, serverHome: String) -> String {
+        switch destination {
+        case .server(let path):
+            return "Server: " + (serverHome.isEmpty ? path : displayPath(path, home: serverHome))
+        case .disk(let location):
+            return "\(location.volumeName): \(location.path)"
+        }
     }
 
     /// The state column of a folder's menu row.
