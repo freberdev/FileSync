@@ -251,7 +251,7 @@ Sökvägen på servern och serveradressen skickas till serverns skal, så bara o
 
 Avvägning: en nyckel utan lösenfras betyder att den som kommer åt ditt användarkonto på Macen också kan logga in på servern. Det är priset för att synken ska fungera obevakad. Nyckeln är egen för Filsynk, så du kan ta bort dess rad ur `~/.ssh/authorized_keys` på servern utan att något annat påverkas.
 
-Konfigurationen ligger i `~/Library/Application Support/Filsynk/config.json`, loggen i `~/Library/Logs/Filsynk/filsynk.log` ("Visa logg" i menyn). Går `config.json` inte att läsa visar appen ett fel, lämnar filen orörd och låser inställningarna tills filen rättats eller tagits bort och appen startats om.
+Konfigurationen ligger i `~/Library/Application Support/Filsynk/config.json`. Varje mapp har en lista `destinations` med ett mål per post: `{"kind":"server","path":…}` eller `{"kind":"disk","volumeUUID":…,"volumeName":…,"path":…}`. En äldre fil med `remotePath` läses och skrivs om i den nya formen nästa gång något sparas. Loggen ligger i `~/Library/Logs/Filsynk/filsynk.log` ("Visa logg" i menyn). Går `config.json` inte att läsa visar appen ett fel, lämnar filen orörd och låser inställningarna tills filen rättats eller tagits bort och appen startats om.
 
 ## Lägga till en mapp
 
@@ -299,7 +299,7 @@ Hämta en äldre version eller en raderad fil under `Raderat/`:
 rsync -a användare@server:/home/användare/Sync/Raderat/2026-11-17_143205/rapport.docx ~/Återställt/
 ```
 
-`/home/användare/Sync` står för mappens sökväg på servern, alltså värdet `remotePath` för mappen i `config.json`. Lägg gärna filen på en annan plats än originalet så att du inte skriver över något av misstag.
+`/home/användare/Sync` står för mappens sökväg på servern, alltså `path` i mappens mål av slaget `server` i `config.json`. Lägg gärna filen på en annan plats än originalet så att du inte skriver över något av misstag.
 
 ## Extern disk
 
@@ -383,7 +383,7 @@ Gör detta en gång. Anteckna det som inte stämmer. `användare@server` och `/h
 
 3. **Inställningar** (ta först bort `~/Library/Application Support/Filsynk/config.json`):
    1. Inställningarna öppnas av sig själva med en rad i tabellen med `~/Sync` under På Macen och `Server: ~/Sync` under Mål, tom adress och en kort vägledning under Server.
-   2. Skriv `användare@server` och tryck Testa anslutning: `✓ Ansluten, rsync 3.x.y`. `config.json` har nu `remotePath` `/home/användare/Sync`, `verifiedServer`, `verifiedHome` och `verifiedLogicalHome`. Kolumnen Mål visar `Server: ~/Sync`.
+   2. Skriv `användare@server` och tryck Testa anslutning: `✓ Ansluten, rsync 3.x.y`. `config.json` har nu `/home/användare/Sync` som `path` i mappens mål av slaget `server`, och `verifiedServer`, `verifiedHome` och `verifiedLogicalHome`. Kolumnen Mål visar `Server: ~/Sync`.
    3. Ange en adress som inte finns (`x@192.0.2.1`): `Servern nås inte.` inom cirka 10 sekunder. Ange `x@h;ls`: rött fel, ingenting sparas.
    4. Lägg till en mapp som ligger inuti `~/Sync`: rött fel, ingenting sparas. Ange `~` eller `~/R&D` som mapp på servern: nekas.
    5. Lägg till en mapp med filer som bara finns i iCloud (eller en egen mapp `Raderat` i toppnivån): varningen visas med Lägg till ändå och Avbryt. Avbryt sparar ingenting; Lägg till ändå lägger till mappen och synken startar först då.

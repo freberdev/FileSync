@@ -13,6 +13,7 @@ struct SettingsView: View {
     @State private var formKind = DestinationKind.server
     @State private var formRemote = ""
     @State private var formDiskPath: String?
+    @State private var formDiskText: String?
     @State private var launchAtLogin = LoginItem.isEnabled
     @State private var loginError: String?
     @FocusState private var serverFocused: Bool
@@ -99,9 +100,6 @@ struct SettingsView: View {
 
     private enum DestinationKind: Hashable { case server, disk }
 
-    /// Tag of the menu entry that opens the folder picker.
-    private let chooseFolderTag = "\u{0}choose"
-
     private var foldersSection: some View {
         Section("Mappar") {
             Table(model.destinationRows, selection: $selection) {
@@ -148,17 +146,17 @@ struct SettingsView: View {
     }
 
     @ViewBuilder private var addForm: some View {
-        Picker("Mapp på Macen", selection: folderChoice) {
-            if let chosen = formFolder, !model.config.folders.contains(where: { $0.path == chosen }) {
-                Text(StatusPresentation.displayPath(chosen, home: home)).tag(Optional(chosen))
+        LabeledContent("Mapp på Macen") {
+            Menu(formFolder.map { StatusPresentation.displayPath($0, home: home) } ?? "Välj mapp…") {
+                ForEach(model.config.folders) { folder in
+                    Button(StatusPresentation.displayPath(folder.path, home: home)) { selectFolder(folder.path) }
+                }
+                Divider()
+                Button("Välj mapp…") { chooseFolder() }
             }
-            ForEach(model.config.folders) { folder in
-                Text(StatusPresentation.displayPath(folder.path, home: home)).tag(Optional(folder.path))
-            }
-            Divider()
-            Text("Välj mapp…").tag(Optional(chooseFolderTag))
+            .fixedSize()
+            .disabled(model.isLocked)
         }
-        .disabled(model.isLocked)
 
         Picker("Mål", selection: $formKind) {
             Text("Server").tag(DestinationKind.server)
@@ -175,8 +173,8 @@ struct SettingsView: View {
             HStack {
                 Button("Välj mapp på disken…") { chooseDiskFolder() }
                     .disabled(model.isLocked)
-                if let picked = formDiskPath {
-                    Text(model.pickedDiskText(picked)).textSelection(.enabled)
+                if let text = formDiskText {
+                    Text(text).textSelection(.enabled)
                 }
             }
         }
@@ -195,19 +193,6 @@ struct SettingsView: View {
         return formKind == .server || formDiskPath != nil
     }
 
-    private var folderChoice: Binding<String?> {
-        Binding(
-            get: { formFolder },
-            set: { choice in
-                guard let choice else { return }
-                if choice == chooseFolderTag {
-                    chooseFolder()
-                } else {
-                    selectFolder(choice)
-                }
-            })
-    }
-
     private func selectFolder(_ path: String) {
         formFolder = path
         formRemote = "~/" + (path as NSString).lastPathComponent
@@ -218,6 +203,7 @@ struct SettingsView: View {
         formKind = .server
         formRemote = ""
         formDiskPath = nil
+        formDiskText = nil
         showsForm = true
     }
 
@@ -225,6 +211,7 @@ struct SettingsView: View {
         showsForm = false
         formFolder = nil
         formDiskPath = nil
+        formDiskText = nil
     }
 
     private func submitForm() {
@@ -258,7 +245,13 @@ struct SettingsView: View {
         panel.canCreateDirectories = true
         panel.directoryURL = URL(fileURLWithPath: "/Volumes")
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        formDiskPath = url.path
+        let picked = url.path
+        formDiskPath = picked
+        formDiskText = nil
+        Task {
+            let text = await model.pickedDiskText(picked)
+            if formDiskPath == picked { formDiskText = text }
+        }
     }
 
     // MARK: Excludes and start

@@ -173,8 +173,11 @@ struct PendingFolder: Equatable {
     }
 
     /// The text shown for a folder picked on a disk: "<diskens namn>: <sökväg>".
-    func pickedDiskText(_ pickedPath: String) -> String {
-        DestinationRows.pickedDiskText(pickedPath: pickedPath, volumes: volumes.mountedVolumes())
+    func pickedDiskText(_ pickedPath: String) async -> String {
+        let volumes = self.volumes
+        return await Task.detached {
+            DestinationRows.pickedDiskText(pickedPath: pickedPath, volumes: volumes.mountedVolumes())
+        }.value
     }
 
     /// Adds a destination to a folder. A folder that is not watched yet is inspected first, so that no
@@ -191,8 +194,11 @@ struct PendingFolder: Equatable {
         case .server(let remoteEntered):
             rejection = flow.addRejection(to: config, localPath: localPath, remoteEntered: remoteEntered)
         case .disk(let pickedPath):
-            rejection = flow.diskRejection(
-                to: config, localPath: localPath, pickedPath: pickedPath, volumes: volumes.mountedVolumes())
+            let flow = self.flow, volumes = self.volumes, config = self.config
+            rejection = await Task.detached {
+                flow.diskRejection(
+                    to: config, localPath: localPath, pickedPath: pickedPath, volumes: volumes.mountedVolumes())
+            }.value
         }
         if let rejection {
             issue = rejection
@@ -234,8 +240,11 @@ struct PendingFolder: Equatable {
             result = await flow.addServerDestination(to: config, localPath: localPath, remoteEntered: remoteEntered)
         case .disk(let pickedPath):
             // The volumes are read now, since a disk may have come or gone while the user was deciding.
-            result = flow.addDiskDestination(
-                to: config, localPath: localPath, pickedPath: pickedPath, volumes: volumes.mountedVolumes())
+            let flow = self.flow, volumes = self.volumes, config = self.config
+            result = await Task.detached {
+                flow.addDiskDestination(
+                    to: config, localPath: localPath, pickedPath: pickedPath, volumes: volumes.mountedVolumes())
+            }.value
         }
         switch result {
         case .rejected(let message):
