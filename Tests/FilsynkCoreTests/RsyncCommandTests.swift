@@ -53,3 +53,61 @@ import Testing
                      "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
                      "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4"])
 }
+
+@Suite struct DiskCommandTests {
+    private let config = Config(folders: [])
+
+    @Test func diskDryRunArgumentsOnAPFS() {
+        let inv = RsyncCommand.diskDryRun(
+            config: config, source: "/Users/x/A", destination: "/Volumes/D/Filsynk/A",
+            format: .apfs, excludeFile: "/tmp/ex")
+        #expect(inv.executable == "/usr/bin/rsync")
+        #expect(inv.arguments == ["-a", "--exclude=/Raderat/", "--exclude=/.filsynk", "--exclude-from=/tmp/ex",
+            "--partial-dir=.filsynk-partial", "-n", "-i", "--delete", "/Users/x/A/", "/Volumes/D/Filsynk/A/"])
+    }
+
+    @Test func diskDryRunArgumentsOnExFAT() {
+        let inv = RsyncCommand.diskDryRun(
+            config: config, source: "/Users/x/A/", destination: "/Volumes/D/Filsynk/A/",
+            format: .exfat, excludeFile: "/tmp/ex")
+        #expect(inv.arguments == ["-rlt", "--modify-window=1", "--exclude=/Raderat/", "--exclude=/.filsynk",
+            "--exclude-from=/tmp/ex", "--partial-dir=.filsynk-partial", "-n", "-i", "--delete",
+            "/Users/x/A/", "/Volumes/D/Filsynk/A/"])
+    }
+
+    @Test func diskSyncArgumentsOnAPFS() {
+        let inv = RsyncCommand.diskSync(
+            config: config, source: "/Users/x/A", destination: "/Volumes/D/Filsynk/A",
+            format: .hfs, timestamp: "2026-11-17_143205", excludeFile: "/tmp/ex")
+        #expect(inv.arguments == ["-a", "--exclude=/Raderat/", "--exclude=/.filsynk", "--exclude-from=/tmp/ex",
+            "--partial-dir=.filsynk-partial", "--backup", "--backup-dir=/Volumes/D/Filsynk/A/Raderat/2026-11-17_143205",
+            "--timeout=60", "--stats", "/Users/x/A/", "/Volumes/D/Filsynk/A/"])
+    }
+
+    @Test func diskSyncArgumentsOnExFAT() {
+        let inv = RsyncCommand.diskSync(
+            config: config, source: "/Users/x/A", destination: "/Volumes/D/Filsynk/A/",
+            format: .exfat, timestamp: "2026-11-17_143205", excludeFile: "/tmp/ex")
+        #expect(inv.arguments == ["-rlt", "--modify-window=1", "--exclude=/Raderat/", "--exclude=/.filsynk",
+            "--exclude-from=/tmp/ex", "--partial-dir=.filsynk-partial", "--backup",
+            "--backup-dir=/Volumes/D/Filsynk/A/Raderat/2026-11-17_143205",
+            "--timeout=60", "--stats", "/Users/x/A/", "/Volumes/D/Filsynk/A/"])
+    }
+
+    @Test func diskSyncNeverContainsDelete() {
+        for format in [VolumeFormat.apfs, .hfs, .exfat] {
+            let inv = RsyncCommand.diskSync(
+                config: config, source: "/a", destination: "/Volumes/D/A",
+                format: format, timestamp: "t", excludeFile: "/tmp/ex")
+            #expect(!inv.arguments.contains("--delete"), "\(format)")
+            #expect(!inv.arguments.contains("-e"), "\(format)")
+            #expect(!inv.arguments.contains { $0.hasPrefix("--delete") }, "\(format)")
+        }
+    }
+
+    @Test func diskCommandsUseTheConfiguredRsync() {
+        var c = config; c.rsyncPath = "/opt/bin/rsync"
+        #expect(RsyncCommand.diskDryRun(config: c, source: "/a", destination: "/b", format: .apfs, excludeFile: "/e").executable == "/opt/bin/rsync")
+        #expect(RsyncCommand.diskSync(config: c, source: "/a", destination: "/b", format: .apfs, timestamp: "t", excludeFile: "/e").executable == "/opt/bin/rsync")
+    }
+}

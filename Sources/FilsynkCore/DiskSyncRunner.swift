@@ -1,0 +1,189 @@
+import Foundation
+
+/// En synk av en mapp till en mapp på en extern disk. Disken slås upp på volym-id; det som rsync
+/// skulle ha tagit bort flyttas först till `Raderat/<tidsstämpel>/`, sedan körs rsync utan radering.
+public final class DiskSyncRunner: @unchecked Sendable {
+    private let process: any ProcessRunning
+    private let volumes: any VolumeMonitoring
+    private let timeZone: TimeZone
+    private let log: (@Sendable (String) -> Void)?
+    private let lock = NSLock()
+    private var lastTimestamp: Date?
+
+    public init(process: any ProcessRunning, volumes: any VolumeMonitoring,
+                timeZone: TimeZone = .current, log: (@Sendable (String) -> Void)? = nil) {
+        self.process = process
+        self.volumes = volumes
+        self.timeZone = timeZone
+        self.log = log
+    }
+
+    public func sync(folder: FolderConfig, disk: DiskLocation, config: Config, now: Date) async -> SyncOutcome {
+        let started = Date()
+        let outcome = await perform(folder: folder, disk: disk, config: config, now: now)
+        let seconds = String(format: "%.1f", Date().timeIntervalSince(started))
+        log?("\(folder.path) → \(disk.volumeName)/\(disk.path): \(describe(outcome)) (\(seconds) s)")
+        return outcome
+    }
+
+    private func perform(folder: FolderConfig, disk: DiskLocation, config: Config, now: Date) async -> SyncOutcome {
+        // 1. Volymen.
+        let volume: VolumeInfo
+        switch VolumeLookup.find(uuid: disk.volumeUUID, in: volumes.mountedVolumes()) {
+        case .failure(.notMounted): return .unreachable
+        case .failure(.duplicate): return .failed("Två inkopplade diskar har samma id.")
+        case .success(let found): volume = found
+        }
+        guard volume.format.isSupported else { return .failed("Diskens format stöds inte.") }
+        guard !volume.isSystem else { return .failed("Systemdisken kan inte vara mål.") }
+
+        // 2. Källan.
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory),
+              isDirectory.boolValue,
+              FileManager.default.isReadableFile(atPath: folder.path) else {
+            return .failed("Mappen \(folder.path) saknas eller går inte att läsa")
+        }
+        if let sourceID = folder.sourceVolumeUUID, !sourceID.isEmpty, !sourceIsOnVolume(folder.path, id: sourceID) {
+            return .unreachable
+        }
+
+        // 3. Målmappen ska finnas och vara en som appen tagit i bruk. Den skapas aldrig här.
+        let destination = (volume.mountPath == "/" ? "" : volume.mountPath) + "/" + disk.path
+        var destinationIsDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: destination, isDirectory: &destinationIsDirectory),
+              destinationIsDirectory.boolValue, DiskMarker.exists(in: destination) else {
+            return .failed("Mappen på disken känns inte igen. Lägg till målet igen.")
+        }
+
+        let timestamp = RsyncCommand.timestamp(nextTimestamp(for: now), timeZone: timeZone)
+
+        // 4. Torrkörningen.
+        let excludeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("filsynk-exclude-\(UUID().uuidString)")
+        do {
+            try RsyncCommand.excludeFileContents(config).write(to: excludeURL, atomically: true, encoding: .utf8)
+        } catch {
+            log?("\(folder.path): kunde inte skriva undantagsfilen: \(error)")
+            return .failed("Kunde inte förbereda synken")
+        }
+        defer { try? FileManager.default.removeItem(at: excludeURL) }
+
+        let dryRun = RsyncCommand.diskDryRun(
+            config: config, source: folder.path, destination: destination,
+            format: volume.format, excludeFile: excludeURL.path)
+        let listing: ProcessResult
+        do {
+            listing = try await process.run(dryRun.executable, dryRun.arguments)
+        } catch {
+            log?("\(folder.path): kunde inte starta rsync: \(error)")
+            return .failed("Kunde inte starta rsync: \(error.localizedDescription)")
+        }
+        guard listing.exitCode == 0 else {
+            return OutcomeClassifier.classify(exitCode: listing.exitCode, stderr: listing.stderr)
+        }
+
+        // 5. Samma disk på samma plats?
+        guard isSameVolume(volume, disk: disk) else { return .unreachable }
+
+        // 6. Flytta undan det som försvunnit.
+        do {
+            var listed = DeletionList.parse(listing.stdout)
+            for entry in Self.replacedEntries(in: listing.stdout, destination: destination)
+            where !listed.contains(entry) {
+                listed.append(entry)
+            }
+            _ = try RaderatMover.move(
+                listed, source: folder.path, destination: destination, timestamp: timestamp)
+        } catch {
+            return .failed("Kunde inte flytta undan raderade filer: \(error.localizedDescription)")
+        }
+
+        // 7. Den riktiga körningen.
+        guard isSameVolume(volume, disk: disk) else { return .unreachable }
+        let real = RsyncCommand.diskSync(
+            config: config, source: folder.path, destination: destination,
+            format: volume.format, timestamp: timestamp, excludeFile: excludeURL.path)
+        let outcome: SyncOutcome
+        do {
+            let result = try await process.run(real.executable, real.arguments)
+            outcome = OutcomeClassifier.classify(exitCode: result.exitCode, stderr: result.stderr)
+        } catch {
+            log?("\(folder.path): kunde inte starta rsync: \(error)")
+            outcome = .failed("Kunde inte starta rsync: \(error.localizedDescription)")
+        }
+        if outcome != .success, !isSameVolume(volume, disk: disk) { return .unreachable }
+        return outcome
+    }
+
+    /// rsync tar bort en post som byter typ (fil som blir mapp, mapp som blir fil, fil som blir länk)
+    /// utan att ta den med i `--backup` och utan att nämna den som borttagen. Torrkörningen visar den
+    /// däremot som nyskapad på en plats där något redan finns. Sådana poster flyttas undan också.
+    /// En mapp får avslutande snedstreck, som i `DeletionList`.
+    private static func replacedEntries(in dryRunOutput: String, destination: String) -> [String] {
+        var result: [String] = []
+        for line in dryRunOutput.utf8.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: true) {
+            // Nio tecken flaggor, ett blanksteg, sedan namnet. Nyskapat är alla flaggor efter de två första "+".
+            let bytes = Array(line)
+            guard bytes.count > 10, bytes[9] == UInt8(ascii: " ") else { continue }
+            let flags = Array(bytes.prefix(9))
+            guard flags[0] != UInt8(ascii: "*"), flags.dropFirst(2).allSatisfy({ $0 == UInt8(ascii: "+") }) else { continue }
+            var name = String(decoding: bytes.dropFirst(10), as: UTF8.self)
+            if name.hasSuffix("\r") { name.removeLast() }
+            var candidates = [name]
+            if flags[1] == UInt8(ascii: "L") {
+                // "namn -> mål": prova varje möjlig delning.
+                var rest = name[...]
+                while let r = rest.range(of: " -> ", options: .backwards) {
+                    rest = rest[..<r.lowerBound]
+                    candidates.append(String(rest))
+                }
+            }
+            for candidate in candidates {
+                let path = candidate.hasSuffix("/") ? String(candidate.dropLast()) : candidate
+                guard !path.isEmpty else { continue }
+                var info = stat()
+                guard lstat(destination + "/" + path, &info) == 0 else { continue }
+                result.append(info.st_mode & S_IFMT == S_IFDIR ? path + "/" : path)
+                break
+            }
+        }
+        return result
+    }
+
+    /// Disken ska fortfarande ha samma id och sitta på samma monteringspunkt som i början.
+    private func isSameVolume(_ original: VolumeInfo, disk: DiskLocation) -> Bool {
+        guard case .success(let current) = VolumeLookup.find(uuid: disk.volumeUUID, in: volumes.mountedVolumes()) else {
+            return false
+        }
+        return current.mountPath == original.mountPath
+    }
+
+    private func sourceIsOnVolume(_ path: String, id: String) -> Bool {
+        let mounted = volumes.mountedVolumes()
+        let real = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        guard let holder = VolumeLookup.volume(containing: real, in: mounted),
+              let holderID = holder.uuid, !holderID.isEmpty else { return false }
+        return holderID.caseInsensitiveCompare(id) == .orderedSame
+    }
+
+    /// Tidsstämpeln är strikt senare än den förra som den här instansen använt.
+    private func nextTimestamp(for now: Date) -> Date {
+        lock.lock(); defer { lock.unlock() }
+        var candidate = Date(timeIntervalSince1970: now.timeIntervalSince1970.rounded(.down))
+        if let last = lastTimestamp, candidate <= last {
+            candidate = last.addingTimeInterval(1)
+        }
+        lastTimestamp = candidate
+        return candidate
+    }
+
+    private func describe(_ outcome: SyncOutcome) -> String {
+        switch outcome {
+        case .success: return "klar"
+        case .unreachable: return "disken nås inte"
+        case .authDenied: return "inloggningen nekades"
+        case .failed(let m): return "misslyckades: \(m)"
+        }
+    }
+}

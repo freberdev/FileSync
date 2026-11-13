@@ -286,10 +286,10 @@ public struct Config: Codable, Equatable, Sendable {
     }
 
     /// A path on a disk is relative to its root: not empty, no leading or trailing slash and no
-    /// `.` or `..` component.
+    /// empty, `.` or `..` component.
     static func isValidDiskPath(_ path: String) -> Bool {
         if path.isEmpty || path.hasPrefix("/") || path.hasSuffix("/") { return false }
-        return !path.split(separator: "/", omittingEmptySubsequences: false).contains { $0 == "." || $0 == ".." }
+        return !path.split(separator: "/", omittingEmptySubsequences: false).contains { $0.isEmpty || $0 == "." || $0 == ".." }
     }
 
     private static func diskComponents(_ path: String) -> [String] {

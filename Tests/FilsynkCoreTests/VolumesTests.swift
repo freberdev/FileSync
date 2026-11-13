@@ -36,6 +36,15 @@ import Testing
         #expect(VolumeLookup.find(uuid: "AAAA-1111", in: [noId]) == .failure(.notMounted))
     }
 
+    @Test func emptyIdNeverMatches() {
+        let blank = volume("", "Utan id", "/Volumes/Utan")
+        let none = volume(nil, "Okänd", "/Volumes/Okand")
+        for id in ["", "  ", "\n"] {
+            #expect(VolumeLookup.find(uuid: id, in: [blank, none]) == .failure(.notMounted), "\(id.debugDescription)")
+        }
+        #expect(VolumeLookup.find(uuid: "AAAA-1111", in: [blank, none]) == .failure(.notMounted))
+    }
+
     @Test func duplicateUUIDIsAProblem() {
         let a = volume("AAAA-1111", "HDD", "/Volumes/HDD")
         let b = volume("aaaa-1111", "HDD 1", "/Volumes/HDD 1")

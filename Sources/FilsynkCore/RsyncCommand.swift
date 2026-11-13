@@ -62,6 +62,36 @@ public enum RsyncCommand {
         return Invocation(executable: config.rsyncPath, arguments: arguments)
     }
 
+    /// Torrkörning mot en disk: listar med `-i` vad `--delete` skulle ta bort. Skriver ingenting.
+    public static func diskDryRun(
+        config: Config, source: String, destination: String,
+        format: VolumeFormat, excludeFile: String
+    ) -> Invocation {
+        let arguments = diskBaseArguments(format: format, excludeFile: excludeFile)
+            + ["-n", "-i", "--delete"]
+            + [withoutTrailingSlashes(source) + "/", withoutTrailingSlashes(destination) + "/"]
+        return Invocation(executable: config.rsyncPath, arguments: arguments)
+    }
+
+    /// Den riktiga körningen mot en disk. Har aldrig `--delete`: det som skrivs över hamnar i
+    /// `Raderat/<tidsstämpel>/`, och det som försvunnit har redan flyttats dit.
+    public static func diskSync(
+        config: Config, source: String, destination: String,
+        format: VolumeFormat, timestamp: String, excludeFile: String
+    ) -> Invocation {
+        let target = withoutTrailingSlashes(destination)
+        let arguments = diskBaseArguments(format: format, excludeFile: excludeFile)
+            + ["--backup", "--backup-dir=\(target)/Raderat/\(timestamp)", "--timeout=60", "--stats"]
+            + [withoutTrailingSlashes(source) + "/", target + "/"]
+        return Invocation(executable: config.rsyncPath, arguments: arguments)
+    }
+
+    private static func diskBaseArguments(format: VolumeFormat, excludeFile: String) -> [String] {
+        let mode = format == .exfat ? ["-rlt", "--modify-window=1"] : ["-a"]
+        return mode + ["--exclude=/Raderat/", "--exclude=/\(DiskMarker.name)",
+                       "--exclude-from=\(excludeFile)", "--partial-dir=.filsynk-partial"]
+    }
+
     private static func withoutTrailingSlashes(_ path: String) -> String {
         var p = path
         while p.count > 1, p.hasSuffix("/") { p.removeLast() }

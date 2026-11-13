@@ -116,7 +116,7 @@ import Foundation
     }
 
     @Test func rejectsBadDiskPaths() {
-        for bad in ["", "/A", "A/", "A/../B", "./A", "A/./B", ".."] {
+        for bad in ["", "/A", "A/", "A/../B", "./A", "A/./B", "..", "A//B"] {
             let c = config([FolderConfig(path: "/Users/x/A", destinations: [disk("U1", bad)])])
             #expect(c.validate(home: "/Users/x") == [.invalidDiskPath(bad)], "\(bad)")
         }

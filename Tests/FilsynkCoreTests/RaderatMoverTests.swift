@@ -221,6 +221,18 @@ import Foundation
         }
     }
 
+    @Test func movesOldFileWhenSourceNowHasALinkThere() throws {
+        try withArea { a in
+            try write(a.src("mal.txt"), "mål")
+            try fm.createSymbolicLink(atPath: a.src("x"), withDestinationPath: "mal.txt")
+            try write(a.dst("x"), "gammal fil")
+            let r = try RaderatMover.move(["x"], source: a.source, destination: a.destination, timestamp: ts)
+            #expect(r.moved == ["x"])
+            #expect(read(a.raderat(ts, "x")) == "gammal fil")
+            #expect(!exists(a.dst("x")))
+        }
+    }
+
     @Test func movesOldFolderWhenSourceNowHasAFileThereOnlyIfEmpty() throws {
         try withArea { a in
             try write(a.src("x"), "fil nu")

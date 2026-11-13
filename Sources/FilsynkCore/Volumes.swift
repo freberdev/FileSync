@@ -143,7 +143,11 @@ public enum VolumeLookup {
     public enum Problem: Error, Equatable, Sendable { case notMounted, duplicate }
 
     public static func find(uuid: String, in volumes: [VolumeInfo]) -> Result<VolumeInfo, Problem> {
-        let matches = volumes.filter { $0.uuid?.caseInsensitiveCompare(uuid) == .orderedSame }
+        guard !uuid.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .failure(.notMounted) }
+        let matches = volumes.filter {
+            guard let id = $0.uuid, !id.isEmpty else { return false }
+            return id.caseInsensitiveCompare(uuid) == .orderedSame
+        }
         switch matches.count {
         case 0: return .failure(.notMounted)
         case 1: return .success(matches[0])
