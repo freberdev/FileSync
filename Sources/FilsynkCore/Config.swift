@@ -1,18 +1,143 @@
 import Foundation
 
+public struct DiskLocation: Codable, Equatable, Sendable {
+    public var volumeUUID: String
+    /// Only for display.
+    public var volumeName: String
+    /// Relative to the root of the disk, without a leading or trailing slash.
+    public var path: String
+
+    public init(volumeUUID: String, volumeName: String, path: String) {
+        self.volumeUUID = volumeUUID
+        self.volumeName = volumeName
+        self.path = path
+    }
+}
+
+public enum Destination: Codable, Equatable, Sendable, Identifiable {
+    /// Absolute once ready; "~/…" until the connection has been tested.
+    case server(path: String)
+    case disk(DiskLocation)
+
+    public var id: String {
+        switch self {
+        case .server: return "server"
+        case .disk(let location): return "disk:\(location.volumeUUID):\(location.path)"
+        }
+    }
+
+    public var isServer: Bool {
+        if case .server = self { return true }
+        return false
+    }
+
+    public var isReady: Bool {
+        switch self {
+        case .server(let path): return path.hasPrefix("/")
+        case .disk: return true
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind, path, volumeUUID, volumeName
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        switch try c.decode(String.self, forKey: .kind) {
+        case "server":
+            self = .server(path: try c.decode(String.self, forKey: .path))
+        case "disk":
+            self = .disk(DiskLocation(
+                volumeUUID: try c.decode(String.self, forKey: .volumeUUID),
+                volumeName: try c.decode(String.self, forKey: .volumeName),
+                path: try c.decode(String.self, forKey: .path)))
+        case let kind:
+            throw DecodingError.dataCorruptedError(
+                forKey: .kind, in: c, debugDescription: "Okänt slags mål: \(kind)")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .server(let path):
+            try c.encode("server", forKey: .kind)
+            try c.encode(path, forKey: .path)
+        case .disk(let location):
+            try c.encode("disk", forKey: .kind)
+            try c.encode(location.volumeUUID, forKey: .volumeUUID)
+            try c.encode(location.volumeName, forKey: .volumeName)
+            try c.encode(location.path, forKey: .path)
+        }
+    }
+}
+
 public struct FolderConfig: Codable, Equatable, Sendable, Identifiable {
     public var id: String { path }
     /// Absolute local path.
     public var path: String
-    /// Absolute once ready; "~/…" until the connection has been tested.
-    public var remotePath: String
+    public var destinations: [Destination]
+    /// Set when the folder lies on a volume other than the system disk.
+    public var sourceVolumeUUID: String?
 
-    public init(path: String, remotePath: String) {
+    public init(path: String, destinations: [Destination], sourceVolumeUUID: String? = nil) {
         self.path = path
-        self.remotePath = remotePath
+        self.destinations = destinations
+        self.sourceVolumeUUID = sourceVolumeUUID
     }
 
-    public var isReady: Bool { remotePath.hasPrefix("/") }
+    public init(path: String, remotePath: String) {
+        self.init(path: path, destinations: [.server(path: remotePath)])
+    }
+
+    /// The path of the server destination, "" when the folder has none. Assigning a path sets it
+    /// (adding a server destination if needed); assigning "" removes the server destination.
+    public var remotePath: String {
+        get {
+            for case .server(let path) in destinations { return path }
+            return ""
+        }
+        set {
+            let index = destinations.firstIndex(where: \.isServer)
+            if newValue.isEmpty {
+                if let index { destinations.remove(at: index) }
+            } else if let index {
+                destinations[index] = .server(path: newValue)
+            } else {
+                destinations.append(.server(path: newValue))
+            }
+        }
+    }
+
+    /// Has a server destination that is ready.
+    public var isReady: Bool { destinations.contains { $0.isServer && $0.isReady } }
+
+    public var diskDestinations: [DiskLocation] {
+        destinations.compactMap { if case .disk(let location) = $0 { return location } else { return nil } }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case path, destinations, sourceVolumeUUID, remotePath
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.path = try c.decode(String.self, forKey: .path)
+        self.sourceVolumeUUID = try c.decodeIfPresent(String.self, forKey: .sourceVolumeUUID)
+        if let destinations = try c.decodeIfPresent([Destination].self, forKey: .destinations) {
+            self.destinations = destinations
+        } else {
+            self.destinations = [.server(path: try c.decode(String.self, forKey: .remotePath))]
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(path, forKey: .path)
+        try c.encode(destinations, forKey: .destinations)
+        try c.encodeIfPresent(sourceVolumeUUID, forKey: .sourceVolumeUUID)
+    }
 }
 
 public struct Config: Codable, Equatable, Sendable {
@@ -121,7 +246,14 @@ public struct Config: Codable, Equatable, Sendable {
             }
         }
         for folder in folders {
-            if let issue = remotePathIssue(folder.remotePath) { issues.append(issue) }
+            let servers = folder.destinations.filter(\.isServer).count
+            if folder.destinations.isEmpty { issues.append(.folderWithoutDestination(folder.path)) }
+            if servers > 1 { issues.append(.multipleServerDestinations(folder.path)) }
+            if servers > 0, let issue = remotePathIssue(folder.remotePath) { issues.append(issue) }
+            for location in folder.diskDestinations {
+                if !Config.isValidDiskPath(location.path) { issues.append(.invalidDiskPath(location.path)) }
+                if location.volumeUUID.isEmpty { issues.append(.missingVolumeID(folder.path)) }
+            }
         }
         if Config.isUnsafe(identityFile)
             || Config.expandTilde(identityFile, home: home).unicodeScalars.contains(where: \.properties.isWhitespace) {
@@ -138,11 +270,30 @@ public struct Config: Codable, Equatable, Sendable {
         for (outer, inner) in Config.nestedPairs(local, components: Config.localComponents) {
             issues.append(.nestedLocalPaths(outer, inner))
         }
-        let remote = folders.map(\.remotePath)
+        let remote = folders.filter { $0.destinations.contains(where: \.isServer) }.map(\.remotePath)
         for (outer, inner) in Config.nestedPairs(remote, components: Config.remoteComponents) {
             issues.append(.nestedRemotePaths(outer, inner))
         }
+        let disks = folders.flatMap(\.diskDestinations)
+            .filter { !$0.volumeUUID.isEmpty && Config.isValidDiskPath($0.path) }
+        for volume in Set(disks.map(\.volumeUUID)).sorted() {
+            let paths = disks.filter { $0.volumeUUID == volume }.map(\.path)
+            for (outer, inner) in Config.nestedPairs(paths, components: Config.diskComponents) {
+                issues.append(.nestedDiskPaths(outer, inner))
+            }
+        }
         return issues
+    }
+
+    /// A path on a disk is relative to its root: not empty, no leading or trailing slash and no
+    /// `.` or `..` component.
+    static func isValidDiskPath(_ path: String) -> Bool {
+        if path.isEmpty || path.hasPrefix("/") || path.hasSuffix("/") { return false }
+        return !path.split(separator: "/", omittingEmptySubsequences: false).contains { $0 == "." || $0 == ".." }
+    }
+
+    private static func diskComponents(_ path: String) -> [String] {
+        path.split(separator: "/").map(String.init)
     }
 
     /// The first problem with a remote path, judged without contacting the server.
@@ -277,6 +428,11 @@ public enum ConfigIssue: Equatable, Sendable {
     case remotePathNotAllowed(String)
     case unsafeExclude(String)
     case localPathHoldsAppFiles(String)
+    case folderWithoutDestination(String)
+    case multipleServerDestinations(String)
+    case invalidDiskPath(String)
+    case missingVolumeID(String)
+    case nestedDiskPaths(String, String)
 
     public var message: String {
         switch self {
@@ -298,6 +454,16 @@ public enum ConfigIssue: Equatable, Sendable {
             return "Undantaget \"\(e)\" går inte att använda. Det får inte vara tomt eller börja med !, + , - , : eller . följt av mellanslag."
         case .localPathHoldsAppFiles(let p):
             return "Mappen \"\(p)\" innehåller Filsynks egna filer (logg och inställningar) och skulle synkas om och om igen. Välj en undermapp."
+        case .folderWithoutDestination(let p):
+            return "Mappen \(p) har inget mål."
+        case .multipleServerDestinations(let p):
+            return "Mappen \(p) har fler än ett mål på servern."
+        case .invalidDiskPath(let p):
+            return "Sökvägen på disken är ogiltig: \(p)"
+        case .missingVolumeID(let p):
+            return "Disken för \(p) saknar id."
+        case .nestedDiskPaths(let a, let b):
+            return "Mapparna på disken \"\(a)\" och \"\(b)\" ligger inuti varandra."
         case .unsafeIdentityFile(let p):
             return "Nyckelfilen \"\(p)\" innehåller otillåtna tecken (mellanslag, citattecken, $, ` eller \\)."
         }
