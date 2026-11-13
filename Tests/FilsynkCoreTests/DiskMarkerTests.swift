@@ -47,4 +47,36 @@ struct DiskMarkerTests {
         try FileManager.default.createDirectory(atPath: dir + "/.filsynk", withIntermediateDirectories: false)
         #expect(!DiskMarker.exists(in: dir))
     }
+
+    @Test func readsTheRecordedFolder() throws {
+        let dir = try makeDirectory()
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        #expect(DiskMarker.folder(in: dir) == nil)
+        try DiskMarker.write(in: dir, folder: "/Users/x/Mina filer")
+        #expect(DiskMarker.folder(in: dir) == "/Users/x/Mina filer")
+        #expect(DiskMarker.folder(in: dir + "/") == "/Users/x/Mina filer")
+    }
+
+    @Test func emptyOrBlankMarkerIsNoMarker() throws {
+        let dir = try makeDirectory()
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        FileManager.default.createFile(atPath: dir + "/.filsynk", contents: Data())
+        #expect(!DiskMarker.exists(in: dir))
+        try "  \n2026-01-01\n".write(toFile: dir + "/.filsynk", atomically: true, encoding: .utf8)
+        #expect(DiskMarker.folder(in: dir) == nil)
+    }
+
+    @Test func failedWriteLeavesNoMarkerBehind() throws {
+        // Writing to /dev/full-like targets is not portable; a read-only directory fails at open and
+        // leaves nothing, and an existing marker is never removed by a failed attempt.
+        let dir = try makeDirectory()
+        defer { chmod(dir, 0o755); try? FileManager.default.removeItem(atPath: dir) }
+        chmod(dir, 0o555)
+        #expect(throws: (any Error).self) { try DiskMarker.write(in: dir, folder: "/Users/x/A") }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir).isEmpty)
+        chmod(dir, 0o755)
+        try DiskMarker.write(in: dir, folder: "/Users/x/A")
+        #expect(throws: (any Error).self) { try DiskMarker.write(in: dir, folder: "/Users/x/B") }
+        #expect(DiskMarker.folder(in: dir) == "/Users/x/A")
+    }
 }

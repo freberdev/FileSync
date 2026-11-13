@@ -77,7 +77,7 @@ public struct SetupFlow: Sendable {
             candidate.folders[index].remotePath = entered
         } else {
             // Nested or unsafe paths.
-            candidate.folders.append(FolderConfig(path: localPath, remotePath: entered))
+            candidate.folders.append(FolderConfig(path: Self.resolved(localPath), remotePath: entered))
         }
         return candidate.validate().first?.message
     }
@@ -102,7 +102,7 @@ public struct SetupFlow: Sendable {
         if let index = Self.folderIndex(of: localPath, in: config) {
             result.folders[index].remotePath = resolved
         } else {
-            result.folders.append(FolderConfig(path: localPath, remotePath: resolved))
+            result.folders.append(FolderConfig(path: Self.resolved(localPath), remotePath: resolved))
         }
         if let issue = result.validate().first { return .rejected(issue.message) }
         return .added(result)
@@ -124,7 +124,7 @@ public struct SetupFlow: Sendable {
     /// disk. The folder goes when its last destination does.
     public static func removeDestination(_ destinationID: String, fromFolder path: String, in config: Config) -> Config {
         var updated = config
-        guard let index = updated.folders.firstIndex(where: { $0.path == path }) else { return config }
+        guard let index = folderIndex(of: path, in: updated) else { return config }
         let before = updated.folders[index].destinations.count
         updated.folders[index].destinations.removeAll { $0.id == destinationID }
         guard updated.folders[index].destinations.count < before else { return config }
@@ -172,6 +172,8 @@ public struct SetupFlow: Sendable {
         }
     }
 
+    private static let notEmptyText = "Mappen på disken måste vara tom. Skapa en ny mapp för säkerhetskopian."
+
     private struct Rejection: Error { var text: String }
 
     private func diskPlan(_ config: Config, localPath: String, pickedPath: String,
@@ -197,12 +199,17 @@ public struct SetupFlow: Sendable {
         }
         guard localPath.hasPrefix("/") else { return reject(ConfigIssue.localPathNotAbsolute(localPath).message) }
         guard let local = Self.realPath(localPath), Self.isDirectory(local) else {
-            return reject("Mappen finns inte.")
+            return reject("Mappen på Macen finns inte.")
         }
 
-        let hasMarker = DiskMarker.exists(in: destination)
-        if !hasMarker, !Self.holdsOnlyFinderFiles(destination) {
-            return reject("Mappen på disken måste vara tom. Skapa en ny mapp för säkerhetskopian.")
+        // A folder with content is only taken over when its marker names this very folder; a marker
+        // naming another folder never is, since the first mirror would move that backup away.
+        let recorded = DiskMarker.folder(in: destination)
+        let hasMarker = recorded != nil
+        if let recorded {
+            if recorded != local { return reject(Self.notEmptyText) }
+        } else if !Self.holdsOnlyFinderFiles(destination) {
+            return reject(Self.notEmptyText)
         }
 
         let destinationParts = Self.components(destination)
@@ -217,8 +224,11 @@ public struct SetupFlow: Sendable {
 
         let location = DiskLocation(volumeUUID: uuid, volumeName: volume.name, path: relative)
         var candidate = config
-        if let index = candidate.folders.firstIndex(where: { Self.resolved($0.path) == local }) {
-            if candidate.folders[index].destinations.contains(.disk(location)) {
+        if let index = Self.folderIndex(of: local, in: candidate) {
+            let same = candidate.folders[index].diskDestinations.contains {
+                $0.volumeUUID.caseInsensitiveCompare(uuid) == .orderedSame && $0.path == relative
+            }
+            if same {
                 return reject("Mappen har redan det här målet.")
             }
             candidate.folders[index].destinations.append(.disk(location))
@@ -234,9 +244,12 @@ public struct SetupFlow: Sendable {
         return .success(DiskPlan(config: candidate, destination: destination, hasMarker: hasMarker, folder: local))
     }
 
+    /// The folder in the config that is the same folder as `localPath`: an exact match, or the same
+    /// path once links are resolved (the standardised path where resolving fails).
     private static func folderIndex(of localPath: String, in config: Config) -> Int? {
-        let wanted = (localPath as NSString).standardizingPath
-        return config.folders.firstIndex { ($0.path as NSString).standardizingPath == wanted }
+        if let exact = config.folders.firstIndex(where: { $0.path == localPath }) { return exact }
+        let wanted = resolved(localPath)
+        return config.folders.firstIndex { resolved($0.path) == wanted }
     }
 
     private static func components(_ path: String) -> [String] {

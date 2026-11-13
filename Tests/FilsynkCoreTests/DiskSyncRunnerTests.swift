@@ -127,7 +127,7 @@ struct DiskSyncRunnerTests {
             let dir = FileManager.default.temporaryDirectory
                 .appendingPathComponent("filsynk-disk-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            base = dir.resolvingSymlinksInPath().path
+            base = realpath(dir.path, nil).map { String(cString: $0) } ?? dir.resolvingSymlinksInPath().path
             source = base + "/src"
             mount = base + "/disk"
             destination = mount + "/Filsynk/A"
@@ -425,6 +425,19 @@ struct DiskSyncRunnerTests {
         #expect(process.calls.isEmpty)
         #expect(s.tree(s.destination) == ["viktig.txt"])
         #expect(s.read(s.destination + "/viktig.txt") == "orörd")
+    }
+
+    @Test func refusesDestinationWhoseMarkerNamesAnotherFolder() async throws {
+        let s = try Setup(marker: false)
+        try DiskMarker.write(in: s.destination, folder: s.base + "/annan")
+        try s.write(s.destination, "gammal.txt", "orörd")
+        try s.write(s.source, "a.txt", "a")
+        let process = FakeProcess()
+        #expect(await s.sync(s.runner(process))
+            == .failed("Mappen på disken känns inte igen. Lägg till målet igen."))
+        #expect(process.calls.isEmpty)
+        #expect(s.tree(s.destination) == [".filsynk", "gammal.txt"])
+        #expect(s.read(s.destination + "/gammal.txt") == "orörd")
     }
 
     @Test func refusesMissingDestinationFolder() async throws {

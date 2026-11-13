@@ -272,4 +272,14 @@ extension ConfigTests {
         #expect(recorded.recordingSourceVolumes(volumes) == recorded)
         #expect(Config(folders: [home]).recordingSourceVolumes(volumes) == Config(folders: [home]))
     }
+
+    @Test func nestedDiskPathsAreFoundWhateverTheCaseOfTheVolumeID() {
+        let a = DiskLocation(volumeUUID: "abcd-1", volumeName: "D", path: "Outer")
+        let b = DiskLocation(volumeUUID: "ABCD-1", volumeName: "D", path: "Outer/Inner")
+        let c = Config(folders: [
+            FolderConfig(path: "/Users/x/A", destinations: [.disk(a)]),
+            FolderConfig(path: "/Users/x/B", destinations: [.disk(b)]),
+        ])
+        #expect(c.validate().contains(.nestedDiskPaths("Outer", "Outer/Inner")))
+    }
 }

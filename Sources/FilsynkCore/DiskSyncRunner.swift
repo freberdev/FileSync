@@ -52,7 +52,9 @@ public final class DiskSyncRunner: @unchecked Sendable {
         let unknown = SyncOutcome.failed("Mappen på disken känns inte igen. Lägg till målet igen.")
         guard Config.isValidDiskPath(disk.path),
               let destination = Self.destinationPath(mount: volume.mountPath, relative: disk.path),
-              DiskMarker.exists(in: destination) else {
+              let recorded = DiskMarker.folder(in: destination),
+              let resolvedSource = Self.realPath(folder.path),
+              recorded == resolvedSource else {
             return unknown
         }
 
@@ -164,6 +166,12 @@ public final class DiskSyncRunner: @unchecked Sendable {
 
     /// `<monteringspunkt>/<relativ sökväg>`, men bara om varje del är en riktig mapp (ingen länk, ingen fil).
     /// Delarna kontrolleras en i taget från monteringspunkten så att ingen länk leder ut från disken.
+    private static func realPath(_ path: String) -> String? {
+        guard let result = realpath(path, nil) else { return nil }
+        defer { free(result) }
+        return String(cString: result)
+    }
+
     private static func destinationPath(mount: String, relative: String) -> String? {
         var path = mount == "/" ? "" : mount
         for component in relative.split(separator: "/", omittingEmptySubsequences: false) {
@@ -184,7 +192,7 @@ public final class DiskSyncRunner: @unchecked Sendable {
 
     private func sourceIsOnVolume(_ path: String, id: String) -> Bool {
         let mounted = volumes.mountedVolumes()
-        let real = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        let real = Self.realPath(path) ?? URL(fileURLWithPath: path).resolvingSymlinksInPath().path
         guard let holder = VolumeLookup.volume(containing: real, in: mounted),
               let holderID = holder.uuid, !holderID.isEmpty else { return false }
         return holderID.caseInsensitiveCompare(id) == .orderedSame

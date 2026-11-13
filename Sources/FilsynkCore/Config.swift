@@ -288,8 +288,8 @@ public struct Config: Codable, Equatable, Sendable {
         }
         let disks = folders.flatMap(\.diskDestinations)
             .filter { !$0.volumeUUID.isEmpty && Config.isValidDiskPath($0.path) }
-        for volume in Set(disks.map(\.volumeUUID)).sorted() {
-            let paths = disks.filter { $0.volumeUUID == volume }.map(\.path)
+        for volume in Set(disks.map { $0.volumeUUID.lowercased() }).sorted() {
+            let paths = disks.filter { $0.volumeUUID.lowercased() == volume }.map(\.path)
             for (outer, inner) in Config.nestedPairs(paths, components: Config.diskComponents) {
                 issues.append(.nestedDiskPaths(outer, inner))
             }
