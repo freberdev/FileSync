@@ -20,11 +20,14 @@ enum ConnectionState: Equatable {
     private(set) var issue: String?
     /// Warnings from the latest added folder.
     private(set) var folderWarnings: [String] = []
+    /// True while a connection test or folder addition talks to the server; settings edits are refused meanwhile.
+    private(set) var isBusy = false
+    /// Set when the config file exists but cannot be read. Nothing may be saved then, so the file is never overwritten.
+    private(set) var configError: String?
 
     var isPaused: Bool { status.isPaused }
 
     @ObservationIgnored private var engineStatus: EngineStatus = .empty
-    @ObservationIgnored private var configError: String?
     @ObservationIgnored private var engine: SyncEngine?
     @ObservationIgnored private let store: ConfigStore
     @ObservationIgnored private let log: FileLog
@@ -37,6 +40,13 @@ enum ConnectionState: Equatable {
         self.notifier = Notifier(log: log)
         self.config = Config.initial(home: NSHomeDirectory())
     }
+
+    var configFilePath: String { store.url.path }
+
+    /// The one place that decides whether anything may be saved: never over an unreadable file.
+    private var canSave: Bool { configError == nil }
+    /// Settings actions additionally wait for a running server request, so no snapshot can go stale.
+    private var canEdit: Bool { canSave && !isBusy }
 
     func start() {
         guard !hasStarted else { return }
@@ -63,6 +73,7 @@ enum ConnectionState: Equatable {
     /// Returns nil on success, otherwise the message to show the user.
     @discardableResult
     func apply(_ newConfig: Config) -> String? {
+        guard canSave else { return "Konfigurationsfilen kan inte läsas" }
         if let issue = newConfig.validate().first { return issue.message }
         do {
             try store.save(newConfig)
@@ -71,7 +82,6 @@ enum ConnectionState: Equatable {
             return "Kunde inte spara konfigurationen"
         }
         config = newConfig
-        configError = nil
         if let engine {
             Task { await engine.reload(newConfig) }
         } else if hasStarted {
@@ -85,6 +95,7 @@ enum ConnectionState: Equatable {
 
     /// Saves a change from the settings window; records the error to show when it is invalid.
     func change(_ edit: (inout Config) -> Void) {
+        guard canEdit else { return }
         var updated = config
         edit(&updated)
         guard updated != config else { return }
@@ -92,6 +103,7 @@ enum ConnectionState: Equatable {
     }
 
     func setServer(_ server: String) {
+        guard canEdit else { return }
         let trimmed = server.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed != config.server else { return }
         connection = .unknown
@@ -108,6 +120,9 @@ enum ConnectionState: Equatable {
     }
 
     func testConnection() async {
+        guard canEdit else { return }
+        isBusy = true
+        defer { isBusy = false }
         connection = .testing
         needsKeyInstall = false
         let outcome = await flow.connect(config)
@@ -125,6 +140,9 @@ enum ConnectionState: Equatable {
 
     /// Returns nil if the folder was rejected (see `issue`), otherwise the inspection report.
     func addFolder(localPath: String, remoteEntered: String) async -> FolderReport? {
+        guard canEdit else { return nil }
+        isBusy = true
+        defer { isBusy = false }
         folderWarnings = []
         switch await flow.addFolder(to: config, localPath: localPath, remoteEntered: remoteEntered) {
         case .rejected(let message):
@@ -140,6 +158,7 @@ enum ConnectionState: Equatable {
     }
 
     func removeFolder(_ folder: FolderConfig) {
+        guard canEdit else { return }
         issue = apply(SetupFlow.removeFolder(folder, from: config))
         folderWarnings = []
     }

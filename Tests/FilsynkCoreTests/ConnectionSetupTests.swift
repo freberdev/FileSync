@@ -132,20 +132,50 @@ struct ConnectionSetupTests {
     }
 
     @Test func resolveExpandsTildeToHome() async throws {
-        let f = fake(out: "/home/u/Sync\n")
+        let f = fake(out: "/home/u\n/home/u/Sync\n")
         let p = try await ConnectionSetup(process: f).resolveRemotePath("~/Sync", server: server, identityFile: key)
         #expect(p == "/home/u/Sync")
         let command = f.calls.first?.arguments.last ?? ""
-        #expect(command == "mkdir -p \"$HOME/Sync\" && cd \"$HOME/Sync\" && pwd -P")
+        #expect(command == "cd && pwd -P && mkdir -p \"$HOME/Sync\" && cd \"$HOME/Sync\" && pwd -P")
         #expect(f.calls.first?.executable == "/usr/bin/ssh")
     }
 
-    @Test func resolveBareTildeAndAbsolute() async throws {
-        let f = fake(out: "/home/u\n")
-        _ = try await ConnectionSetup(process: f).resolveRemotePath("~", server: server, identityFile: key)
-        #expect(f.calls.last?.arguments.last == "mkdir -p \"$HOME\" && cd \"$HOME\" && pwd -P")
-        _ = try await ConnectionSetup(process: f).resolveRemotePath("/srv/x", server: server, identityFile: key)
-        #expect(f.calls.last?.arguments.last == "mkdir -p \"/srv/x\" && cd \"/srv/x\" && pwd -P")
+    @Test func resolveAbsolutePathCommand() async throws {
+        let f = fake(out: "/home/u\n/srv/x\n")
+        let p = try await ConnectionSetup(process: f).resolveRemotePath("/srv/x", server: server, identityFile: key)
+        #expect(p == "/srv/x")
+        #expect(f.calls.last?.arguments.last == "cd && pwd -P && mkdir -p \"/srv/x\" && cd \"/srv/x\" && pwd -P")
+    }
+
+    @Test func resolveRejectsHomeRootAndAncestorsOfHome() async {
+        let cases: [(entered: String, out: String)] = [
+            ("~", "/home/u\n/home/u\n"),
+            ("/", "/home/u\n/\n"),
+            ("/home", "/home/u\n/home\n"),
+            ("/home/u", "/home/u\n/home/u\n"),
+            ("~/..", "/home/u\n/home\n"),
+        ]
+        for (entered, out) in cases {
+            let f = fake(out: out)
+            await #expect(throws: ConnectionError.pathTooBroad, "\(entered)") {
+                _ = try await ConnectionSetup(process: f).resolveRemotePath(entered, server: server, identityFile: key)
+            }
+        }
+    }
+
+    @Test func resolveToleratesBannerAndSiblingWithCommonPrefix() async throws {
+        let f = fake(out: "Welcome to host\n\n/home/u\n/home/u2/Sync\n")
+        let p = try await ConnectionSetup(process: f).resolveRemotePath("/home/u2/Sync", server: server, identityFile: key)
+        #expect(p == "/home/u2/Sync")
+        let g = fake(out: "motd line\n/home/u\n/home/u/Sync\n")
+        #expect(try await ConnectionSetup(process: g).resolveRemotePath("~/Sync", server: server, identityFile: key) == "/home/u/Sync")
+    }
+
+    @Test func resolveRejectsOutputWithoutHomeAndPath() async {
+        let f = fake(out: "/home/u/Sync\n")
+        await #expect(throws: ConnectionError.self) {
+            _ = try await ConnectionSetup(process: f).resolveRemotePath("~/Sync", server: server, identityFile: key)
+        }
     }
 
     @Test func resolveRejectsUnsafePath() async {
@@ -204,7 +234,7 @@ struct ConnectionSetupTests {
     }
 
     @Test func sshArgumentsPutDoubleDashBeforeServer() async throws {
-        let f = fake(out: "/home/u/Sync\n")
+        let f = fake(out: "/home/u\n/home/u/Sync\n")
         _ = try await ConnectionSetup(process: f).resolveRemotePath("~/Sync", server: "user@host", identityFile: key)
         let args = f.calls.first?.arguments ?? []
         #expect(args.count >= 3 && args[args.count - 3] == "--" && args[args.count - 2] == "user@host")

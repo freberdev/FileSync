@@ -184,8 +184,8 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
     static let pathA = "/filsynk-test/A"
     static let pathB = "/filsynk-test/B"
 
-    static func config(_ folders: [FolderConfig], server: String = "user@server") -> Config {
-        Config(server: server, folders: folders)
+    static func config(_ folders: [FolderConfig], server: String = "user@server", verifiedServer: String? = nil) -> Config {
+        Config(server: server, folders: folders, verifiedServer: verifiedServer ?? server)
     }
     static let folderA = FolderConfig(path: pathA, remotePath: "/srv/A")
     static let folderB = FolderConfig(path: pathB, remotePath: "/srv/B")
@@ -248,6 +248,19 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
         #expect(noServer.recorder.state(of: Self.pathA) == .notConfigured)
         #expect(noServer.watchers.created.isEmpty)
         await noServer.engine.stop()
+    }
+
+    @Test func unverifiedServerSyncsNothingAndReportsNotConfigured() async {
+        // Folders are absolute ("ready") but were resolved on another server, or never verified.
+        for verified in ["old@server", ""] {
+            let h = Self.make(Self.config([Self.folderA, Self.folderB], verifiedServer: verified))
+            await h.engine.start()
+            await settle()
+            #expect(await h.runner.totalCalls == 0)
+            #expect(h.watchers.created.isEmpty)
+            #expect(h.recorder.latest?.folders.map(\.state) == [.notConfigured, .notConfigured])
+            await h.engine.stop()
+        }
     }
 
     @Test func invalidConfigSyncsNothing() async {

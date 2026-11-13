@@ -26,8 +26,10 @@ public struct SetupFlow: Sendable {
         let result = await setup.check(server: config.server, identityFile: config.identityFile)
         guard case .ok = result else { return (result, config) }
 
+        // Paths resolved on another server mean nothing here: resolve them all again.
+        let resolveAll = config.verifiedServer != config.server
         var updated = config
-        for index in updated.folders.indices where !updated.folders[index].isReady {
+        for index in updated.folders.indices where resolveAll || !updated.folders[index].isReady {
             do {
                 updated.folders[index].remotePath = try await setup.resolveRemotePath(
                     updated.folders[index].remotePath, server: updated.server, identityFile: updated.identityFile)
@@ -35,13 +37,14 @@ public struct SetupFlow: Sendable {
                 return (.failed(Self.message(for: error)), updated)
             }
         }
+        updated.verifiedServer = updated.server
         return (result, updated)
     }
 
     /// Resolves the remote path and appends the folder. Never returns an invalid config.
     public func addFolder(to config: Config, localPath: String, remoteEntered: String) async -> AddFolderResult {
         let entered = remoteEntered.trimmingCharacters(in: .whitespacesAndNewlines)
-        if config.server.isEmpty { return .rejected("Ange serveradressen först.") }
+        if !config.isVerified { return .rejected("Testa anslutningen först.") }
 
         // Everything knowable without the server: nested or unsafe paths.
         var candidate = config
@@ -80,6 +83,8 @@ public struct SetupFlow: Sendable {
             return "Kunde inte skapa mappen på servern: \(outcome.message ?? "okänt fel")"
         case .unexpectedOutput:
             return "Oväntat svar från servern"
+        case .pathTooBroad:
+            return "Välj en egen mapp på servern, inte hemkatalogen eller en mapp ovanför den."
         case .keyCreationFailed(let detail):
             return "Kunde inte skapa nyckeln: \(detail)"
         }

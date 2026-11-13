@@ -80,3 +80,30 @@ extension ConfigTests {
     @Test func excludesTextRoundTrips() { var c = Config.initial(home: "/a"); c.exclude = ["a", "b"]; #expect(Config.parseExcludes(c.excludesText()) == ["a", "b"]) }
     @Test func emptyExcludesText() { #expect(Config.parseExcludes("").isEmpty); #expect(Config.initial(home: "/a").excludesText() == "") }
 }
+
+extension ConfigTests {
+    @Test func verifiedServerDefaultsToEmptyWhenAbsent() throws {
+        let json = #"{"server":"u@h","folders":[]}"#
+        let c = try JSONDecoder().decode(Config.self, from: Data(json.utf8))
+        #expect(c.verifiedServer == "")
+        #expect(!c.isVerified)
+    }
+
+    @Test func verifiedServerRoundTrips() throws {
+        let c = Config(server: "u@h", verifiedServer: "u@h")
+        let back = try JSONDecoder().decode(Config.self, from: JSONEncoder().encode(c))
+        #expect(back == c && back.verifiedServer == "u@h" && back.isVerified)
+    }
+
+    @Test func isVerifiedNeedsMatchingNonEmptyServer() {
+        #expect(!Config(server: "", verifiedServer: "").isVerified)
+        #expect(!Config(server: "a@h", verifiedServer: "b@h").isVerified)
+        #expect(Config(server: "a@h", verifiedServer: "a@h").isVerified)
+    }
+
+    @Test func validateRejectsRootAsRemotePath() {
+        let c = Config(server: "u@h", folders: [.init(path: "/Users/x/A", remotePath: "/")])
+        #expect(c.validate().contains(.remotePathTooBroad("/")))
+        #expect(ConfigIssue.remotePathTooBroad("/").message == "Sökvägen på servern \"/\" är för bred. Välj en egen mapp.")
+    }
+}

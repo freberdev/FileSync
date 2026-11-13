@@ -23,6 +23,8 @@ public struct Config: Codable, Equatable, Sendable {
     public var exclude: [String]
     public var folders: [FolderConfig]
     public var rsyncPath: String
+    /// The server on which the connection test last succeeded and the folders' remote paths were resolved.
+    public var verifiedServer: String
 
     public static let builtInExcludes: [String] = [
         ".DS_Store", "._*", ".localized", ".Trash*", ".Spotlight-V100", ".fseventsd",
@@ -35,7 +37,8 @@ public struct Config: Codable, Equatable, Sendable {
         maxWaitSeconds: Int = 600,
         exclude: [String] = [],
         folders: [FolderConfig] = [],
-        rsyncPath: String = "/usr/bin/rsync"
+        rsyncPath: String = "/usr/bin/rsync",
+        verifiedServer: String = ""
     ) {
         self.server = server
         self.identityFile = identityFile
@@ -44,10 +47,14 @@ public struct Config: Codable, Equatable, Sendable {
         self.exclude = exclude
         self.folders = folders
         self.rsyncPath = rsyncPath
+        self.verifiedServer = verifiedServer
     }
 
+    /// True when `server` is the one the remote paths were resolved on.
+    public var isVerified: Bool { !server.isEmpty && server == verifiedServer }
+
     private enum CodingKeys: String, CodingKey {
-        case server, identityFile, quietSeconds, maxWaitSeconds, exclude, folders, rsyncPath
+        case server, identityFile, quietSeconds, maxWaitSeconds, exclude, folders, rsyncPath, verifiedServer
     }
 
     public init(from decoder: Decoder) throws {
@@ -59,6 +66,7 @@ public struct Config: Codable, Equatable, Sendable {
         self.maxWaitSeconds = try c.decodeIfPresent(Int.self, forKey: .maxWaitSeconds) ?? 600
         self.exclude = try c.decodeIfPresent([String].self, forKey: .exclude) ?? []
         self.rsyncPath = try c.decodeIfPresent(String.self, forKey: .rsyncPath) ?? "/usr/bin/rsync"
+        self.verifiedServer = try c.decodeIfPresent(String.self, forKey: .verifiedServer) ?? ""
     }
 
     public static func initial(home: String) -> Config {
@@ -91,6 +99,9 @@ public struct Config: Codable, Equatable, Sendable {
         }
         for folder in folders where Config.isUnsafe(folder.remotePath) {
             issues.append(.unsafeRemotePath(folder.remotePath))
+        }
+        for folder in folders where folder.remotePath.hasPrefix("/") && Config.remoteComponents(folder.remotePath).isEmpty {
+            issues.append(.remotePathTooBroad(folder.remotePath))
         }
         if Config.isUnsafe(identityFile) {
             issues.append(.unsafeIdentityFile(identityFile))
@@ -128,7 +139,7 @@ public struct Config: Codable, Equatable, Sendable {
         return standardized.split(separator: "/").map(String.init)
     }
 
-    private static func remoteComponents(_ path: String) -> [String] {
+    static func remoteComponents(_ path: String) -> [String] {
         var result: [String] = []
         for part in path.split(separator: "/") {
             switch part {
@@ -168,6 +179,7 @@ public enum ConfigIssue: Equatable, Sendable {
     case unsafeRemotePath(String)
     case unsafeIdentityFile(String)
     case unsafeServer(String)
+    case remotePathTooBroad(String)
 
     public var message: String {
         switch self {
@@ -181,6 +193,8 @@ public enum ConfigIssue: Equatable, Sendable {
             return "Sökvägen på servern \"\(p)\" innehåller otillåtna tecken (mellanslag, citattecken, $, ` eller \\)."
         case .unsafeServer(let s):
             return "Serveradressen är ogiltig: \(s)"
+        case .remotePathTooBroad(let p):
+            return "Sökvägen på servern \"\(p)\" är för bred. Välj en egen mapp."
         case .unsafeIdentityFile(let p):
             return "Nyckelfilen \"\(p)\" innehåller otillåtna tecken (mellanslag, citattecken, $, ` eller \\)."
         }

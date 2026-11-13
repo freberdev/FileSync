@@ -13,6 +13,7 @@ public enum ConnectionError: Error, Equatable, Sendable {
     case remoteCommandFailed(SyncOutcome)
     case unexpectedOutput(String)
     case keyCreationFailed(String)
+    case pathTooBroad
 }
 
 public struct ConnectionSetup: Sendable {
@@ -82,17 +83,27 @@ public struct ConnectionSetup: Sendable {
         } else {
             quoted = entered
         }
-        let command = "mkdir -p \"\(quoted)\" && cd \"\(quoted)\" && pwd -P"
+        // Prints the home directory, then the resolved folder; the folder is refused if it is the
+        // home directory or above it (a --delete sync there would move authorized_keys away).
+        let command = "cd && pwd -P && mkdir -p \"\(quoted)\" && cd \"\(quoted)\" && pwd -P"
         let result = try await remote(server: server, identityFile: identityFile, command: command)
 
         guard result.exitCode == 0 else {
             throw ConnectionError.remoteCommandFailed(
                 OutcomeClassifier.classify(exitCode: result.exitCode, stderr: result.stderr))
         }
-        let line = result.stdout.split(whereSeparator: \.isNewline)
+        let lines = result.stdout.split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
-            .last { !$0.isEmpty } ?? ""
-        guard line.hasPrefix("/") else { throw ConnectionError.unexpectedOutput(line) }
+            .filter { !$0.isEmpty }
+        guard lines.count >= 2, let home = lines.dropLast().last, let line = lines.last,
+              home.hasPrefix("/"), line.hasPrefix("/")
+        else { throw ConnectionError.unexpectedOutput(lines.last ?? "") }
+
+        let pathParts = line.split(separator: "/")
+        let homeParts = home.split(separator: "/")
+        if pathParts.count <= homeParts.count, Array(homeParts.prefix(pathParts.count)) == pathParts {
+            throw ConnectionError.pathTooBroad
+        }
         return line
     }
 

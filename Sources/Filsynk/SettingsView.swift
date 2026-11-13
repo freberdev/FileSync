@@ -19,9 +19,17 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            serverSection
-            foldersSection
-            excludesSection
+            if model.configError != nil {
+                Section {
+                    Text("Konfigurationsfilen kan inte läsas. Rätta eller ta bort filen och starta om Filsynk.")
+                        .foregroundStyle(.red)
+                    Text(model.configFilePath).textSelection(.enabled)
+                }
+            } else {
+                serverSection
+                foldersSection
+                excludesSection
+            }
             startSection
             if let message = model.issue ?? loginError {
                 Text(message).foregroundStyle(.red)
@@ -42,6 +50,7 @@ struct SettingsView: View {
         Section("Server") {
             TextField("Adress", text: $serverDraft, prompt: Text("användare@server"))
                 .focused($serverFocused)
+                .disabled(model.isBusy)
                 .onSubmit { model.setServer(serverDraft) }
                 .onChange(of: serverFocused) { _, focused in if !focused { model.setServer(serverDraft) } }
             LabeledContent("Nyckel") { Text(model.config.identityFile).textSelection(.enabled) }
@@ -51,7 +60,7 @@ struct SettingsView: View {
                     guard model.config.server == serverDraft.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
                     Task { await model.testConnection() }
                 }
-                .disabled(model.connection == .testing)
+                .disabled(model.isBusy)
                 connectionLine
             }
             if model.needsKeyInstall {
@@ -100,6 +109,7 @@ struct SettingsView: View {
             HStack {
                 Button { chooseFolder() } label: { Image(systemName: "plus") }
                     .accessibilityLabel("Lägg till mapp")
+                    .disabled(model.isBusy)
                 Button {
                     if let folder = model.config.folders.first(where: { $0.path == selection }) {
                         model.removeFolder(folder)
@@ -107,7 +117,7 @@ struct SettingsView: View {
                     }
                 } label: { Image(systemName: "minus") }
                     .accessibilityLabel("Ta bort mapp")
-                    .disabled(selection == nil)
+                    .disabled(selection == nil || model.isBusy)
             }
             Text("Inget tas bort på servern.").font(.caption).foregroundStyle(.secondary)
 
@@ -124,6 +134,7 @@ struct SettingsView: View {
                             }
                         }
                     }
+                    .disabled(model.isBusy)
                     Button("Avbryt") { pendingLocalPath = nil }
                 }
             }
@@ -152,6 +163,7 @@ struct SettingsView: View {
         Section("Undantag (gäller alla mappar)") {
             TextField("Undantag", text: $excludesDraft, prompt: Text("node_modules, *.tmp"))
                 .focused($excludesFocused)
+                .disabled(model.isBusy)
                 .onSubmit { model.setExcludes(excludesDraft) }
                 .onChange(of: excludesFocused) { _, focused in if !focused { model.setExcludes(excludesDraft) } }
         }

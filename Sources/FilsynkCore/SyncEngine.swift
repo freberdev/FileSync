@@ -316,7 +316,7 @@ public actor SyncEngine {
     }
 
     private static func makeSlots(config: Config, timing: EngineTiming) -> [Slot] {
-        let valid = config.validate().isEmpty && !config.server.isEmpty
+        let valid = config.validate().isEmpty && config.isVerified
         return config.folders.map { folder in
             Slot(
                 folder: folder,
