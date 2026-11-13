@@ -1,0 +1,79 @@
+import Foundation
+
+public enum Notice: Equatable, Sendable {
+    case authDenied(folder: String)
+    case repeatedFailure(folder: String, message: String)
+    case stale(folder: String)
+
+    public var title: String {
+        switch self {
+        case .authDenied: return "Filsynk: inloggningen nekades"
+        case .repeatedFailure: return "Filsynk: synken misslyckas"
+        case .stale: return "Filsynk: osynkade ändringar"
+        }
+    }
+
+    public var body: String {
+        switch self {
+        case .authDenied:
+            return "Servern accepterar inte nyckeln. Öppna Inställningar och testa anslutningen."
+        case .repeatedFailure(let folder, let message):
+            return "\(folder): \(message)"
+        case .stale(let folder):
+            return "\(folder) har inte kunnat säkerhetskopieras på över ett dygn."
+        }
+    }
+}
+
+/// Decides when a notification is sent. Keeps per-folder memory so that calling
+/// `evaluate` repeatedly with an unchanged schedule never repeats a notice.
+public struct NoticePolicy: Sendable {
+    private struct FolderMemory: Sendable {
+        /// `lastSuccess` at the time the auth notice was sent; the notice is rearmed when it changes.
+        var authNotified = false
+        var successAtAuthNotice: Date?
+        var failureSeriesNotified = false
+        var lastStaleNotice: Date?
+    }
+
+    private static let failureThreshold = 3
+    private static let staleAge: TimeInterval = 24 * 3600
+
+    private var memory: [String: FolderMemory] = [:]
+
+    public init() {}
+
+    /// Called after every finished sync and at every periodic check.
+    public mutating func evaluate(folder: String, schedule: FolderSchedule, now: Date) -> [Notice] {
+        var mem = memory[folder] ?? FolderMemory()
+        var notices: [Notice] = []
+
+        // A successful sync since the last auth notice rearms it.
+        if mem.authNotified, schedule.lastSuccess != mem.successAtAuthNotice {
+            mem.authNotified = false
+        }
+        if schedule.lastOutcome == .authDenied, !mem.authNotified {
+            mem.authNotified = true
+            mem.successAtAuthNotice = schedule.lastSuccess
+            notices.append(.authDenied(folder: folder))
+        }
+
+        if schedule.failureCount < Self.failureThreshold {
+            mem.failureSeriesNotified = false
+        } else if schedule.failureCount == Self.failureThreshold,
+                  case .failed(let message)? = schedule.lastOutcome,
+                  !mem.failureSeriesNotified {
+            mem.failureSeriesNotified = true
+            notices.append(.repeatedFailure(folder: folder, message: message))
+        }
+
+        if let since = schedule.dirtySince, now.timeIntervalSince(since) > Self.staleAge,
+           mem.lastStaleNotice.map({ now.timeIntervalSince($0) >= Self.staleAge }) ?? true {
+            mem.lastStaleNotice = now
+            notices.append(.stale(folder: folder))
+        }
+
+        memory[folder] = mem
+        return notices
+    }
+}
