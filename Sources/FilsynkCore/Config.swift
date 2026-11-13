@@ -98,7 +98,7 @@ public struct Config: Codable, Equatable, Sendable {
 
     private static let unsafeCharacters: Set<Character> = [" ", "\"", "'", "$", "`", "\\", "\n", "\r", "\r\n"]
 
-    private static func isUnsafe(_ s: String) -> Bool {
+    static func isUnsafe(_ s: String) -> Bool {
         s.contains { unsafeCharacters.contains($0) }
     }
 
