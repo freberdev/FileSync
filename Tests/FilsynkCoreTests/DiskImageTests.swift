@@ -5,7 +5,8 @@ import Foundation
 /// Prov mot riktiga volymer utan någon fysisk disk. Valfritt: sätt FILSYNK_DISK_IMAGE_TESTS=1.
 /// Varje test skapar sina egna diskavbilder i en ny temporär katalog och monterar dem med
 /// `hdiutil attach -mountrandom` på en plats i samma katalog, så att inget hamnar under /Volumes.
-/// Utan `-nobrowse`: en sådan volym räknas som dold och listas inte av `SystemVolumeMonitor`.
+/// Avbilderna monteras utan `-nobrowse`, eftersom en volym som monterats med den flaggan räknas som
+/// dold och inte listas av `SystemVolumeMonitor`.
 /// Det som testet kopplat in kopplas loss igen med enhetsnoden `hdiutil attach` gav, och
 /// katalogen tas bort när ingen avbild under den är kvar. Går en avkoppling inte att genomföra
 /// lämnas katalogen kvar och testet säger var och vilka enheter som är inkopplade.

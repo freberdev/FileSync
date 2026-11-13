@@ -111,7 +111,8 @@ public enum RaderatMover {
         }
     }
 
-    /// Regel 2 och 3: finns posten i målet, är den inte Raderat, och saknas den i källan (eller är där en annan sorts post: fil, mapp eller länk)?
+    /// Får posten flyttas undan? Den ska finnas i målet, inte vara Raderat eller ligga i den, och saknas
+    /// i källan eller vara en annan sorts post där (fil, mapp eller länk).
     private static func qualifies(_ c: Candidate, source: String, destination: String, destinationReal: String) -> Bool {
         // Varje mapp på vägen i målet ska vara en riktig mapp, aldrig en länk.
         var prefix = destination

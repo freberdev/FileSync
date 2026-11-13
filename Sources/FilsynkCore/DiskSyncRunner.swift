@@ -176,14 +176,14 @@ public final class DiskSyncRunner: @unchecked Sendable {
         return result
     }
 
-    /// `<monteringspunkt>/<relativ sökväg>`, men bara om varje del är en riktig mapp (ingen länk, ingen fil).
-    /// Delarna kontrolleras en i taget från monteringspunkten så att ingen länk leder ut från disken.
     private static func realPath(_ path: String) -> String? {
         guard let result = realpath(path, nil) else { return nil }
         defer { free(result) }
         return String(cString: result)
     }
 
+    /// `<monteringspunkt>/<relativ sökväg>`, men bara om varje del är en riktig mapp (ingen länk, ingen fil).
+    /// Delarna kontrolleras en i taget från monteringspunkten så att ingen länk leder ut från disken.
     private static func destinationPath(mount: String, relative: String) -> String? {
         var path = mount == "/" ? "" : mount
         for component in relative.split(separator: "/", omittingEmptySubsequences: false) {
