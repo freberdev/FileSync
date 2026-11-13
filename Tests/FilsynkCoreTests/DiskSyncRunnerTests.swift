@@ -13,7 +13,17 @@ final class FakeVolumes: VolumeMonitoring, @unchecked Sendable {
         set { lock.withLock { list = newValue } }
     }
 
-    func mountedVolumes() -> [VolumeInfo] { volumes }
+    private var queries = 0
+    /// Töms när uppslagning nummer så många görs (1 är den första).
+    var vanishAtQuery: Int?
+
+    func mountedVolumes() -> [VolumeInfo] {
+        lock.withLock {
+            queries += 1
+            if let n = vanishAtQuery, queries >= n { list = [] }
+            return list
+        }
+    }
     func start(onMount: @escaping @Sendable (VolumeInfo) -> Void,
                onWillUnmount: @escaping @Sendable (VolumeInfo) -> Void,
                onUnmount: @escaping @Sendable (String) -> Void) {}
@@ -491,7 +501,7 @@ struct DiskSyncRunnerTests {
             ProcessResult(exitCode: 0, stdout: "", stderr: ""),
             ProcessResult(exitCode: 11, stdout: "", stderr: "rsync: write failed: No space left on device\n"),
         ])
-        #expect(await s.sync(s.runner(process)) == .failed("Disken på servern är full"))
+        #expect(await s.sync(s.runner(process)) == .failed("Disken är full"))
     }
 
     @Test func failedRealRunWithVolumeGoneIsUnreachable() async throws {
@@ -504,10 +514,131 @@ struct DiskSyncRunnerTests {
         #expect(await s.sync(s.runner(process)) == .unreachable)
     }
 
+    @Test func dryRunExitingWith24StillMovesAndSyncs() async throws {
+        let s = try Setup()
+        try s.write(s.destination, "borta.txt", "borta")
+        let process = ScriptedRsync([
+            ProcessResult(exitCode: 24, stdout: "*deleting borta.txt\n", stderr: ""),
+            ProcessResult(exitCode: 0, stdout: "", stderr: ""),
+        ])
+        #expect(await s.sync(s.runner(process)) == .success)
+        #expect(process.calls.count == 2)
+        #expect(s.read(s.raderat + "/" + s.timestamp + "/borta.txt") == "borta")
+    }
+
+    @Test func dryRunFailureGivesNoSecondInvocation() async throws {
+        let s = try Setup()
+        let process = ScriptedRsync([ProcessResult(exitCode: 23, stdout: "", stderr: "fel\n")])
+        let outcome = await s.sync(s.runner(process))
+        #expect(outcome == .failed("fel"))
+        #expect(process.calls.count == 1)
+    }
+
+    @Test func volumeGoneAfterTheMoveStopsBeforeTheRealRun() async throws {
+        let s = try Setup()
+        try s.write(s.destination, "borta.txt", "borta")
+        // Uppslagningar: början, efter torrkörningen, före den riktiga körningen.
+        s.volumes.vanishAtQuery = 3
+        let process = ScriptedRsync([ProcessResult(exitCode: 0, stdout: "*deleting borta.txt\n", stderr: "")])
+        #expect(await s.sync(s.runner(process)) == .unreachable)
+        #expect(process.calls.count == 1)
+        #expect(s.read(s.raderat + "/" + s.timestamp + "/borta.txt") == "borta")
+    }
+
+    @Test func earlierBackupInRaderatIsNeverReplaced() async throws {
+        let s = try Setup()
+        try s.write(s.destination, "Raderat/\(s.timestamp)/a", "tidigare kopia")
+        try s.write(s.destination, "a", "gammalt")
+        try s.write(s.source, "a", "nytt och längre")
+        #expect(await s.sync(s.runner(SystemProcessRunner())) == .success)
+        let later = RsyncCommand.timestamp(s.now.addingTimeInterval(1), timeZone: s.timeZone)
+        #expect(s.read(s.raderat + "/" + s.timestamp + "/a") == "tidigare kopia")
+        #expect(s.read(s.raderat + "/" + later + "/a") == "gammalt")
+        #expect(s.read(s.destination + "/a") == "nytt och längre")
+    }
+
+    @Test func linkInTheMiddleOfTheDiskPathIsRefused() async throws {
+        let s = try Setup()
+        let outside = s.base + "/utanfor"
+        try FileManager.default.createDirectory(atPath: outside + "/A", withIntermediateDirectories: true)
+        try DiskMarker.write(in: outside + "/A", folder: s.source)
+        try FileManager.default.createSymbolicLink(atPath: s.mount + "/F", withDestinationPath: outside)
+        try s.write(s.source, "a.txt", "a")
+        let process = FakeProcess()
+        let moved = DiskLocation(volumeUUID: "U1", volumeName: "Testdisk", path: "F/A")
+        let outcome = await s.runner(process).sync(folder: s.folder, disk: moved, config: s.config, now: s.now)
+        #expect(outcome == .failed("Mappen på disken känns inte igen. Lägg till målet igen."))
+        #expect(process.calls.isEmpty)
+        #expect(s.tree(outside) == ["A/", "A/.filsynk"])
+    }
+
+    @Test func linkAsTheLastComponentOfTheDiskPathIsRefused() async throws {
+        let s = try Setup()
+        let outside = s.base + "/utanfor"
+        try FileManager.default.createDirectory(atPath: outside, withIntermediateDirectories: true)
+        try DiskMarker.write(in: outside, folder: s.source)
+        try FileManager.default.createSymbolicLink(atPath: s.mount + "/Filsynk/L", withDestinationPath: outside)
+        try s.write(s.source, "a.txt", "a")
+        let process = FakeProcess()
+        let moved = DiskLocation(volumeUUID: "U1", volumeName: "Testdisk", path: "Filsynk/L")
+        let outcome = await s.runner(process).sync(folder: s.folder, disk: moved, config: s.config, now: s.now)
+        #expect(outcome == .failed("Mappen på disken känns inte igen. Lägg till målet igen."))
+        #expect(process.calls.isEmpty)
+        #expect(s.tree(outside) == [".filsynk"])
+    }
+
+    @Test func invalidDiskPathIsRefusedByTheRunner() async throws {
+        let s = try Setup()
+        let process = FakeProcess()
+        for bad in ["", "/Filsynk/A", "Filsynk//A", "Filsynk/../Filsynk/A", "./Filsynk/A", "Filsynk/A/"] {
+            let location = DiskLocation(volumeUUID: "U1", volumeName: "Testdisk", path: bad)
+            let outcome = await s.runner(process).sync(folder: s.folder, disk: location, config: s.config, now: s.now)
+            #expect(outcome == .failed("Mappen på disken känns inte igen. Lägg till målet igen."), "\(bad)")
+        }
+        #expect(process.calls.isEmpty)
+    }
+
+    @Test func raderatThatIsALinkStopsBeforeTheRealRun() async throws {
+        let s = try Setup()
+        let elsewhere = s.base + "/annanstans"
+        try FileManager.default.createDirectory(atPath: elsewhere, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: s.destination + "/Raderat", withDestinationPath: elsewhere)
+        try s.write(s.destination, "a", "gammalt")
+        try s.write(s.source, "a", "nytt och längre")
+        let outcome = await s.sync(s.runner(SystemProcessRunner()))
+        #expect(outcome == .failed("Mappen Raderat på disken är inte en vanlig mapp."))
+        #expect(s.tree(elsewhere).isEmpty)
+        #expect(s.read(s.destination + "/a") == "gammalt")
+    }
+
+    @Test func fileNamedLikeALinkDoesNotHideTheReplacedFile() async throws {
+        let s = try Setup()
+        try s.write(s.source, "m", "mål")
+        try FileManager.default.createSymbolicLink(atPath: s.source + "/x", withDestinationPath: "m")
+        try s.write(s.source, "x -> m", "fil med pil")
+        try s.write(s.destination, "x -> m", "fil med pil")
+        try s.write(s.destination, "x", "gamla x")
+        #expect(await s.sync(s.runner(SystemProcessRunner())) == .success)
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: s.destination + "/x") == "m")
+        #expect(s.read(s.raderat + "/" + s.timestamp + "/x") == "gamla x")
+        #expect(s.read(s.destination + "/x -> m") == "fil med pil")
+    }
+
+    @Test func reservedNamesHoldRegardlessOfCase() async throws {
+        let s = try Setup()
+        let marker = s.read(s.destination + "/.filsynk")
+        try s.write(s.source, ".FILSYNK", "angripare")
+        try s.write(s.source, "raderat/x.txt", "ska inte kopieras")
+        try s.write(s.source, "a.txt", "a")
+        #expect(await s.sync(s.runner(SystemProcessRunner())) == .success)
+        #expect(s.read(s.destination + "/.filsynk") == marker)
+        #expect(s.tree(s.destination) == [".filsynk", "a.txt"])
+    }
+
     @Test func moveFailureStopsBeforeTheRealRun() async throws {
         let s = try Setup()
-        // Raderat/<tidsstämpel> är en fil, så mappen går inte att skapa.
-        try s.write(s.destination, "Raderat/\(s.timestamp)", "i vägen")
+        // Raderat är en fil, så mappen under den går inte att skapa.
+        try s.write(s.destination, "Raderat", "i vägen")
         try s.write(s.destination, "borta.txt", "borta")
         let process = ScriptedRsync([ProcessResult(exitCode: 0, stdout: "*deleting borta.txt\n", stderr: "")])
         let outcome = await s.sync(s.runner(process))

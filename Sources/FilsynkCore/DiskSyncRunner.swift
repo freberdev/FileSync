@@ -49,20 +49,20 @@ public final class DiskSyncRunner: @unchecked Sendable {
         }
 
         // 3. Målmappen ska finnas och vara en som appen tagit i bruk. Den skapas aldrig här.
-        let destination = (volume.mountPath == "/" ? "" : volume.mountPath) + "/" + disk.path
-        var destinationIsDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: destination, isDirectory: &destinationIsDirectory),
-              destinationIsDirectory.boolValue, DiskMarker.exists(in: destination) else {
-            return .failed("Mappen på disken känns inte igen. Lägg till målet igen.")
+        let unknown = SyncOutcome.failed("Mappen på disken känns inte igen. Lägg till målet igen.")
+        guard Config.isValidDiskPath(disk.path),
+              let destination = Self.destinationPath(mount: volume.mountPath, relative: disk.path),
+              DiskMarker.exists(in: destination) else {
+            return unknown
         }
 
-        let timestamp = RsyncCommand.timestamp(nextTimestamp(for: now), timeZone: timeZone)
+        let timestamp = RsyncCommand.timestamp(nextTimestamp(for: now, destination: destination), timeZone: timeZone)
 
         // 4. Torrkörningen.
         let excludeURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("filsynk-exclude-\(UUID().uuidString)")
         do {
-            try RsyncCommand.excludeFileContents(config).write(to: excludeURL, atomically: true, encoding: .utf8)
+            try RsyncCommand.diskExcludeFileContents(config).write(to: excludeURL, atomically: true, encoding: .utf8)
         } catch {
             log?("\(folder.path): kunde inte skriva undantagsfilen: \(error)")
             return .failed("Kunde inte förbereda synken")
@@ -79,7 +79,8 @@ public final class DiskSyncRunner: @unchecked Sendable {
             log?("\(folder.path): kunde inte starta rsync: \(error)")
             return .failed("Kunde inte starta rsync: \(error.localizedDescription)")
         }
-        guard listing.exitCode == 0 else {
+        // 24: filer försvann medan rsync listade. Varje listad sökväg kontrolleras ändå mot källan.
+        guard listing.exitCode == 0 || listing.exitCode == 24 else {
             return OutcomeClassifier.classify(exitCode: listing.exitCode, stderr: listing.stderr)
         }
 
@@ -101,13 +102,18 @@ public final class DiskSyncRunner: @unchecked Sendable {
 
         // 7. Den riktiga körningen.
         guard isSameVolume(volume, disk: disk) else { return .unreachable }
+        var raderat = stat()
+        if lstat(destination + "/Raderat", &raderat) == 0, raderat.st_mode & S_IFMT != S_IFDIR {
+            return .failed("Mappen Raderat på disken är inte en vanlig mapp.")
+        }
         let real = RsyncCommand.diskSync(
             config: config, source: folder.path, destination: destination,
             format: volume.format, timestamp: timestamp, excludeFile: excludeURL.path)
         let outcome: SyncOutcome
         do {
             let result = try await process.run(real.executable, real.arguments)
-            outcome = OutcomeClassifier.classify(exitCode: result.exitCode, stderr: result.stderr)
+            let classified = OutcomeClassifier.classify(exitCode: result.exitCode, stderr: result.stderr)
+            outcome = classified == .failed("Disken på servern är full") ? .failed("Disken är full") : classified
         } catch {
             log?("\(folder.path): kunde inte starta rsync: \(error)")
             outcome = .failed("Kunde inte starta rsync: \(error.localizedDescription)")
@@ -139,16 +145,29 @@ public final class DiskSyncRunner: @unchecked Sendable {
                     candidates.append(String(rest))
                 }
             }
+            // Alla kandidater som finns lämnas över; mover avgör vilka som får flyttas.
             for candidate in candidates {
                 let path = candidate.hasSuffix("/") ? String(candidate.dropLast()) : candidate
                 guard !path.isEmpty else { continue }
                 var info = stat()
                 guard lstat(destination + "/" + path, &info) == 0 else { continue }
-                result.append(info.st_mode & S_IFMT == S_IFDIR ? path + "/" : path)
-                break
+                let entry = info.st_mode & S_IFMT == S_IFDIR ? path + "/" : path
+                if !result.contains(entry) { result.append(entry) }
             }
         }
         return result
+    }
+
+    /// `<monteringspunkt>/<relativ sökväg>`, men bara om varje del är en riktig mapp (ingen länk, ingen fil).
+    /// Delarna kontrolleras en i taget från monteringspunkten så att ingen länk leder ut från disken.
+    private static func destinationPath(mount: String, relative: String) -> String? {
+        var path = mount == "/" ? "" : mount
+        for component in relative.split(separator: "/", omittingEmptySubsequences: false) {
+            path += "/" + component
+            var info = stat()
+            guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { return nil }
+        }
+        return path
     }
 
     /// Disken ska fortfarande ha samma id och sitta på samma monteringspunkt som i början.
@@ -167,12 +186,19 @@ public final class DiskSyncRunner: @unchecked Sendable {
         return holderID.caseInsensitiveCompare(id) == .orderedSame
     }
 
-    /// Tidsstämpeln är strikt senare än den förra som den här instansen använt.
-    private func nextTimestamp(for now: Date) -> Date {
+    /// Tidsstämpeln är strikt senare än den förra som den här instansen använt, och namnger ingen
+    /// post som redan finns under Raderat: rsync skriver över en sådan utan att fråga.
+    private func nextTimestamp(for now: Date, destination: String) -> Date {
         lock.lock(); defer { lock.unlock() }
         var candidate = Date(timeIntervalSince1970: now.timeIntervalSince1970.rounded(.down))
         if let last = lastTimestamp, candidate <= last {
             candidate = last.addingTimeInterval(1)
+        }
+        while true {
+            var info = stat()
+            let name = RsyncCommand.timestamp(candidate, timeZone: timeZone)
+            if lstat(destination + "/Raderat/" + name, &info) != 0 { break }
+            candidate = candidate.addingTimeInterval(1)
         }
         lastTimestamp = candidate
         return candidate

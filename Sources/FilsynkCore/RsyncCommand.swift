@@ -86,6 +86,14 @@ public enum RsyncCommand {
         return Invocation(executable: config.rsyncPath, arguments: arguments)
     }
 
+    /// Undantagsfilen för en disk: de vanliga mönstren plus de två reserverade namnen i målets rot,
+    /// oavsett skiftläge, eftersom APFS och exFAT normalt inte skiljer på versaler och gemener.
+    public static func diskExcludeFileContents(_ config: Config) -> String {
+        excludeFileContents(config)
+            + "/[Rr][Aa][Dd][Ee][Rr][Aa][Tt]\n"
+            + "/.[Ff][Ii][Ll][Ss][Yy][Nn][Kk]\n"
+    }
+
     private static func diskBaseArguments(format: VolumeFormat, excludeFile: String) -> [String] {
         let mode = format == .exfat ? ["-rlt", "--modify-window=1"] : ["-a"]
         return mode + ["--exclude=/Raderat/", "--exclude=/\(DiskMarker.name)",
