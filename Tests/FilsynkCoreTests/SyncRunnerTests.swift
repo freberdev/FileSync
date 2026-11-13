@@ -31,14 +31,22 @@ final class LogSink: @unchecked Sendable {
     var lines: [String] { lock.lock(); defer { lock.unlock() }; return _lines }
 }
 
-struct SyncRunnerTests {
+final class SyncRunnerTests {
     let config = Config(server: "user@host", folders: [])
+    /// Holds the source folders; removed when the test is done.
+    private let root: String
+
+    init() throws {
+        root = FileManager.default.temporaryDirectory.appendingPathComponent("filsynk-runner-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+    }
+
+    deinit { try? FileManager.default.removeItem(atPath: root) }
 
     private func makeSourceDir() throws -> String {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("filsynk-runner-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.path
+        let dir = root + "/src-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        return dir
     }
 
     private func backupDir(_ call: (executable: String, arguments: [String])) -> String? {

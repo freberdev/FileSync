@@ -33,10 +33,20 @@ final class ScriptedProcess: ProcessRunning, @unchecked Sendable {
     }
 }
 
-struct SetupFlowTests {
+final class SetupFlowTests {
+    /// Holds the key files; removed when the test is done.
+    private let root: String
+
+    init() throws {
+        root = FileManager.default.temporaryDirectory.appendingPathComponent("filsynk-flow-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+    }
+
+    deinit { try? FileManager.default.removeItem(atPath: root) }
+
     private func tempKey() -> String {
         // Existing file so ensureKey does nothing unless a test removes it.
-        let path = FileManager.default.temporaryDirectory.appendingPathComponent("filsynk-flow-\(UUID().uuidString)").path
+        let path = root + "/key-\(UUID().uuidString)"
         FileManager.default.createFile(atPath: path, contents: Data())
         return path
     }
