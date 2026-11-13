@@ -781,4 +781,17 @@ final class DiskDestinationTests {
         #expect(SetupFlow.removeDestination("disk:U9:x", fromFolder: "/Users/x/A", in: c) == c)
         #expect(SetupFlow.removeDestination("server", fromFolder: "/Users/x/Z", in: c) == c)
     }
+
+    @Test func knowsWhichFoldersAreWatched() throws {
+        let real = FileManager.default.temporaryDirectory.appendingPathComponent("filsynk-watched-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: real, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: real) }
+        let link = real + "-link"
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: real)
+        defer { try? FileManager.default.removeItem(atPath: link) }
+        let c = config([FolderConfig(path: real, remotePath: "/srv/A")])
+        #expect(SetupFlow.isWatched(real, in: c))
+        #expect(SetupFlow.isWatched(link, in: c))
+        #expect(!SetupFlow.isWatched("/Users/x/Annan", in: c))
+    }
 }

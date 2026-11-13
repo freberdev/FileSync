@@ -11,7 +11,8 @@ struct MenuView: View {
         if !status.folders.isEmpty {
             Divider()
             ForEach(status.folders) { folder in
-                Text("\(rowName(folder))   \(StatusPresentation.folderLabel(folder, timeZone: .current))")
+                Text(DestinationRows.menuLine(
+                    folder, home: NSHomeDirectory(), serverHome: model.config.verifiedHome, timeZone: .current))
             }
         }
         Divider()
@@ -24,11 +25,5 @@ struct MenuView: View {
         Button("Visa logg") { model.openLog() }
         Divider()
         Button("Avsluta Filsynk") { model.quit() }
-    }
-
-    private func rowName(_ folder: FolderStatus) -> String {
-        let path = StatusPresentation.displayPath(folder.path, home: NSHomeDirectory())
-        guard let destination = folder.destination else { return path }
-        return path + " → " + StatusPresentation.destinationLabel(destination, serverHome: model.config.verifiedHome)
     }
 }

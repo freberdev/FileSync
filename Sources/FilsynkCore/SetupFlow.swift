@@ -132,6 +132,11 @@ public struct SetupFlow: Sendable {
         return updated
     }
 
+    /// True when the folder, or the folder a link points to, is already in the configuration.
+    public static func isWatched(_ localPath: String, in config: Config) -> Bool {
+        folderIndex(of: localPath, in: config) != nil
+    }
+
     // MARK: Disk destinations
 
     private struct DiskPlan {

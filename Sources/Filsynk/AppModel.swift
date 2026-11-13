@@ -6,10 +6,18 @@ enum ConnectionState: Equatable {
     case unknown, testing, ok(String), problem(String)
 }
 
+/// Where a folder is to be mirrored to.
+enum NewDestination: Equatable {
+    /// The path as the user typed it.
+    case server(remoteEntered: String)
+    /// The folder picked on the disk, as the panel returned it.
+    case disk(pickedPath: String)
+}
+
 /// A folder whose inspection found warnings; it is added only if the user confirms.
 struct PendingFolder: Equatable {
     let localPath: String
-    let remoteEntered: String
+    let destination: NewDestination
     let report: FolderReport
     var warnings: [String] { report.warnings }
 }
@@ -159,36 +167,58 @@ struct PendingFolder: Equatable {
         }
     }
 
-    /// Inspects the folder before anything is saved, so that no sync starts before its warnings
-    /// have been seen. With warnings the folder waits in `pendingFolder` for `confirmPendingFolder()`.
-    /// Returns true when the folder was added.
-    func addFolder(localPath: String, remoteEntered: String) async -> Bool {
+    /// The rows of the folder table: one per destination.
+    var destinationRows: [DestinationRow] {
+        DestinationRows.rows(config: config, status: status, home: NSHomeDirectory(), timeZone: .current)
+    }
+
+    /// The text shown for a folder picked on a disk: "<diskens namn>: <sökväg>".
+    func pickedDiskText(_ pickedPath: String) -> String {
+        DestinationRows.pickedDiskText(pickedPath: pickedPath, volumes: volumes.mountedVolumes())
+    }
+
+    /// Adds a destination to a folder. A folder that is not watched yet is inspected first, so that no
+    /// sync starts before its warnings have been seen; with warnings it waits in `pendingFolder` for
+    /// `confirmPendingFolder()`. A disk is judged before the folder is inspected, so that a folder
+    /// that will be refused is not walked. Returns true when the destination was added.
+    func addDestination(_ destination: NewDestination, toFolder localPath: String) async -> Bool {
         guard canEdit else { return false }
         isBusy = true
         defer { isBusy = false }
         issue = nil
-        if let message = flow.addRejection(to: config, localPath: localPath, remoteEntered: remoteEntered) {
-            issue = message
+        let rejection: String?
+        switch destination {
+        case .server(let remoteEntered):
+            rejection = flow.addRejection(to: config, localPath: localPath, remoteEntered: remoteEntered)
+        case .disk(let pickedPath):
+            rejection = flow.diskRejection(
+                to: config, localPath: localPath, pickedPath: pickedPath, volumes: volumes.mountedVolumes())
+        }
+        if let rejection {
+            issue = rejection
             return false
+        }
+        if SetupFlow.isWatched(localPath, in: config) {
+            return await performAdd(localPath: localPath, destination: destination)
         }
         let report = await Task.detached { FolderInspector.inspect(path: localPath) }.value
         switch FolderAddStep.after(report, confirmed: false) {
         case .confirm:
-            pendingFolder = PendingFolder(localPath: localPath, remoteEntered: remoteEntered, report: report)
+            pendingFolder = PendingFolder(localPath: localPath, destination: destination, report: report)
             return false
         case .add:
-            return await performAdd(localPath: localPath, remoteEntered: remoteEntered)
+            return await performAdd(localPath: localPath, destination: destination)
         }
     }
 
-    /// Adds the pending folder despite its warnings. Returns true when the folder was added.
+    /// Adds the pending folder despite its warnings. Returns true when the destination was added.
     func confirmPendingFolder() async -> Bool {
         guard canSave, !isBusy, let pending = pendingFolder else { return false }
         isBusy = true
         defer { isBusy = false }
         pendingFolder = nil
         guard FolderAddStep.after(pending.report, confirmed: true) == .add else { return false }
-        return await performAdd(localPath: pending.localPath, remoteEntered: pending.remoteEntered)
+        return await performAdd(localPath: pending.localPath, destination: pending.destination)
     }
 
     /// Discards the pending folder; nothing was saved.
@@ -197,8 +227,17 @@ struct PendingFolder: Equatable {
         pendingFolder = nil
     }
 
-    private func performAdd(localPath: String, remoteEntered: String) async -> Bool {
-        switch await flow.addFolder(to: config, localPath: localPath, remoteEntered: remoteEntered) {
+    private func performAdd(localPath: String, destination: NewDestination) async -> Bool {
+        let result: AddFolderResult
+        switch destination {
+        case .server(let remoteEntered):
+            result = await flow.addServerDestination(to: config, localPath: localPath, remoteEntered: remoteEntered)
+        case .disk(let pickedPath):
+            // The volumes are read now, since a disk may have come or gone while the user was deciding.
+            result = flow.addDiskDestination(
+                to: config, localPath: localPath, pickedPath: pickedPath, volumes: volumes.mountedVolumes())
+        }
+        switch result {
         case .rejected(let message):
             issue = message
             return false
@@ -208,14 +247,10 @@ struct PendingFolder: Equatable {
         }
     }
 
-    func removeFolder(_ folder: FolderConfig) {
+    /// Removes one destination from the configuration; nothing is touched on the server or the disk.
+    func removeDestination(_ row: DestinationRow) {
         guard canEdit else { return }
-        issue = apply(SetupFlow.removeFolder(folder, from: config))
-    }
-
-    /// The status of the folder's server destination.
-    func state(of folder: FolderConfig) -> FolderStatus? {
-        status.folders.first { $0.path == folder.path && $0.destination?.isServer == true }
+        issue = apply(SetupFlow.removeDestination(row.destinationID, fromFolder: row.folderPath, in: config))
     }
 
     func syncNow() {

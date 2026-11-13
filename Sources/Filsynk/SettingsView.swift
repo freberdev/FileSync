@@ -8,8 +8,11 @@ struct SettingsView: View {
     @State private var serverDraft = ""
     @State private var excludesDraft = ""
     @State private var selection: String?
-    @State private var pendingLocalPath: String?
-    @State private var pendingRemote = ""
+    @State private var showsForm = false
+    @State private var formFolder: String?
+    @State private var formKind = DestinationKind.server
+    @State private var formRemote = ""
+    @State private var formDiskPath: String?
     @State private var launchAtLogin = LoginItem.isEnabled
     @State private var loginError: String?
     @FocusState private var serverFocused: Bool
@@ -94,69 +97,49 @@ struct SettingsView: View {
 
     // MARK: Folders
 
+    private enum DestinationKind: Hashable { case server, disk }
+
+    /// Tag of the menu entry that opens the folder picker.
+    private let chooseFolderTag = "\u{0}choose"
+
     private var foldersSection: some View {
         Section("Mappar") {
-            Table(model.config.folders, selection: $selection) {
-                TableColumn("På Macen") { folder in
-                    Text(StatusPresentation.displayPath(folder.path, home: home))
-                }
-                TableColumn("På servern") { folder in
-                    Text(remoteDisplayPath(folder.remotePath))
-                }
-                TableColumn("") { folder in
-                    Text(stateLabel(folder))
-                }
+            Table(model.destinationRows, selection: $selection) {
+                TableColumn("På Macen", value: \.local)
+                TableColumn("Mål", value: \.destination)
+                TableColumn("", value: \.state)
             }
             .frame(minHeight: 120)
 
             HStack {
-                Button { chooseFolder() } label: { Image(systemName: "plus") }
-                    .accessibilityLabel("Lägg till mapp")
+                Button { openForm() } label: { Image(systemName: "plus") }
+                    .accessibilityLabel("Lägg till mål")
                     .disabled(model.isLocked)
                 Button {
-                    if let folder = model.config.folders.first(where: { $0.path == selection }) {
-                        model.removeFolder(folder)
+                    if let row = model.destinationRows.first(where: { $0.id == selection }) {
+                        model.removeDestination(row)
                         selection = nil
                     }
                 } label: { Image(systemName: "minus") }
-                    .accessibilityLabel("Ta bort mapp")
+                    .accessibilityLabel("Ta bort mål")
                     .disabled(selection == nil || model.isLocked)
             }
-            Text("Inget tas bort på servern.").font(.caption).foregroundStyle(.secondary)
+            Text("Inget tas bort på servern eller disken.").font(.caption).foregroundStyle(.secondary)
 
-            if let local = pendingLocalPath {
-                HStack {
-                    Text(StatusPresentation.displayPath(local, home: home))
-                    Image(systemName: "arrow.right")
-                    TextField("Sökväg på servern", text: $pendingRemote)
-                        .disabled(model.isLocked)
-                    Button("Lägg till") {
-                        let remote = pendingRemote
-                        Task {
-                            if await model.addFolder(localPath: local, remoteEntered: remote) {
-                                pendingLocalPath = nil
-                            }
-                        }
-                    }
-                    .disabled(model.isLocked)
-                    Button("Avbryt") { pendingLocalPath = nil }
-                        .disabled(model.isLocked)
-                    if model.isBusy { ProgressView().controlSize(.small) }
-                }
-            }
+            if showsForm { addForm }
 
             if let pending = model.pendingFolder {
                 ForEach(pending.warnings, id: \.self) { Text($0) }
                 HStack {
                     Button("Lägg till ändå") {
                         Task {
-                            if await model.confirmPendingFolder() { pendingLocalPath = nil }
+                            if await model.confirmPendingFolder() { closeForm() }
                         }
                     }
                     .disabled(model.isBusy)
                     Button("Avbryt") {
                         model.cancelPendingFolder()
-                        pendingLocalPath = nil
+                        closeForm()
                     }
                     .disabled(model.isBusy)
                 }
@@ -164,16 +147,98 @@ struct SettingsView: View {
         }
     }
 
-    /// The server's home directory is shown as "~", like the Mac's in the other column.
-    private func remoteDisplayPath(_ path: String) -> String {
-        let remoteHome = model.config.verifiedHome
-        return remoteHome.isEmpty ? path : StatusPresentation.displayPath(path, home: remoteHome)
+    @ViewBuilder private var addForm: some View {
+        Picker("Mapp på Macen", selection: folderChoice) {
+            if let chosen = formFolder, !model.config.folders.contains(where: { $0.path == chosen }) {
+                Text(StatusPresentation.displayPath(chosen, home: home)).tag(Optional(chosen))
+            }
+            ForEach(model.config.folders) { folder in
+                Text(StatusPresentation.displayPath(folder.path, home: home)).tag(Optional(folder.path))
+            }
+            Divider()
+            Text("Välj mapp…").tag(Optional(chooseFolderTag))
+        }
+        .disabled(model.isLocked)
+
+        Picker("Mål", selection: $formKind) {
+            Text("Server").tag(DestinationKind.server)
+            Text("Extern disk").tag(DestinationKind.disk)
+        }
+        .pickerStyle(.segmented)
+        .disabled(model.isLocked)
+
+        switch formKind {
+        case .server:
+            TextField("Sökväg på servern", text: $formRemote)
+                .disabled(model.isLocked)
+        case .disk:
+            HStack {
+                Button("Välj mapp på disken…") { chooseDiskFolder() }
+                    .disabled(model.isLocked)
+                if let picked = formDiskPath {
+                    Text(model.pickedDiskText(picked)).textSelection(.enabled)
+                }
+            }
+        }
+
+        HStack {
+            Button("Lägg till") { submitForm() }
+                .disabled(model.isLocked || !formIsComplete)
+            Button("Avbryt") { closeForm() }
+                .disabled(model.isLocked)
+            if model.isBusy { ProgressView().controlSize(.small) }
+        }
     }
 
-    private func stateLabel(_ folder: FolderConfig) -> String {
-        guard folder.isReady else { return "Inte inställd" }
-        guard let status = model.state(of: folder) else { return "Väntar" }
-        return StatusPresentation.folderLabel(status, timeZone: .current)
+    private var formIsComplete: Bool {
+        guard formFolder != nil else { return false }
+        return formKind == .server || formDiskPath != nil
+    }
+
+    private var folderChoice: Binding<String?> {
+        Binding(
+            get: { formFolder },
+            set: { choice in
+                guard let choice else { return }
+                if choice == chooseFolderTag {
+                    chooseFolder()
+                } else {
+                    selectFolder(choice)
+                }
+            })
+    }
+
+    private func selectFolder(_ path: String) {
+        formFolder = path
+        formRemote = "~/" + (path as NSString).lastPathComponent
+    }
+
+    private func openForm() {
+        formFolder = nil
+        formKind = .server
+        formRemote = ""
+        formDiskPath = nil
+        showsForm = true
+    }
+
+    private func closeForm() {
+        showsForm = false
+        formFolder = nil
+        formDiskPath = nil
+    }
+
+    private func submitForm() {
+        guard let folder = formFolder else { return }
+        let destination: NewDestination
+        switch formKind {
+        case .server: destination = .server(remoteEntered: formRemote)
+        case .disk:
+            guard let picked = formDiskPath else { return }
+            destination = .disk(pickedPath: picked)
+        }
+        Task {
+            if await model.addDestination(destination, toFolder: folder) { closeForm() }
+        }
     }
 
     private func chooseFolder() {
@@ -182,8 +247,18 @@ struct SettingsView: View {
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        pendingLocalPath = url.path
-        pendingRemote = "~/" + url.lastPathComponent
+        selectFolder(url.path)
+    }
+
+    private func chooseDiskFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.directoryURL = URL(fileURLWithPath: "/Volumes")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        formDiskPath = url.path
     }
 
     // MARK: Excludes and start

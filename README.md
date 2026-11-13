@@ -2,7 +2,7 @@
 
 ## Vad det är
 
-Filsynk är en liten menyradsapp för macOS (minst macOS 15) som säkerhetskopierar utvalda mappar på Macen till din egen Linux-server med rsync över SSH. Den bevakar mapparna, skickar bara det som ändrats och flyttar det som raderas eller skrivs över undan på servern i stället för att ta bort det. Servern är en backup, inte en arbetsyta: ändringar går bara från Macen till servern, aldrig tillbaka.
+Filsynk är en liten menyradsapp för macOS (minst macOS 15) som säkerhetskopierar utvalda mappar på Macen till din egen Linux-server med rsync över SSH, och till en eller flera externa diskar. Den bevakar mapparna, skickar bara det som ändrats och flyttar det som raderas eller skrivs över undan i stället för att ta bort det. Servern och disken är backuper, inte arbetsytor: ändringar går bara från Macen till målet, aldrig tillbaka.
 
 ## Bygga och installera
 
@@ -255,7 +255,16 @@ Konfigurationen ligger i `~/Library/Application Support/Filsynk/config.json`, lo
 
 ## Lägga till en mapp
 
-Välj mappen med **+** i Inställningar och ange var den ska ligga på servern. Innan något sparas går appen igenom mappen. Finns det något att varna för, till exempel filer som bara ligger i iCloud (de laddas ner vid första synken), fler än 100 000 filer eller en egen mapp `Raderat` i toppnivån, visas varningen med knapparna **Lägg till ändå** och **Avbryt**. Inget sparas och ingen synk startar förrän du valt. Utan varningar läggs mappen till direkt.
+En mapp kan ha flera mål: ett på servern och hur många externa diskar som helst. Tabellen i Inställningar har en rad per mål.
+
+Tryck **+** i Inställningar. Under **Mapp på Macen** väljer du en mapp som redan bevakas eller **Välj mapp…**. Under **Mål** väljer du **Server** eller **Extern disk**:
+
+- **Server:** ange var mappen ska ligga på servern (förifyllt med `~/` och mappens namn).
+- **Extern disk:** tryck **Välj mapp på disken…** och välj eller skapa en ny, tom mapp på disken. Se Extern disk nedan.
+
+Tryck sedan **Lägg till**. En mapp som inte redan bevakas går appen igenom innan något sparas. Finns det något att varna för, till exempel filer som bara ligger i iCloud (de laddas ner vid första synken), fler än 100 000 filer eller en egen mapp `Raderat` i toppnivån, visas varningen med knapparna **Lägg till ändå** och **Avbryt**. Inget sparas och ingen synk startar förrän du valt. Utan varningar läggs målet till direkt.
+
+**–** tar bort det markerade målet ur appen. Inget tas bort på servern eller disken. Försvinner mappens sista mål bevakas den inte längre.
 
 ## Så ser det ut på servern
 
@@ -292,11 +301,48 @@ rsync -a användare@server:/home/användare/Sync/Raderat/2026-11-17_143205/rappo
 
 `/home/användare/Sync` står för mappens sökväg på servern, alltså värdet `remotePath` för mappen i `config.json`. Lägg gärna filen på en annan plats än originalet så att du inte skriver över något av misstag.
 
+## Extern disk
+
+Samma mapp kan speglas till en extern disk, vid sidan av servern eller i stället för den. Disken fungerar som servern: innehållet speglas, och det som raderas eller skrivs över flyttas till `Raderat/`.
+
+### Lägga till
+
+Inställningar → Mappar → **+** → **Extern disk** → **Välj mapp på disken…**. Mappen på disken måste vara ny och tom; Finders egna dolda filer (`.DS_Store` och `._*`) räknas inte. Skapa den i väljaren med **Ny mapp**. Disken själv, alltså dess rot, går inte att välja.
+
+Appen lägger en liten fil, `.filsynk`, i mappen. Den anger vilken mapp på Macen som hör till mappen på disken. Appen synkar aldrig in i en mapp som saknar filen eller vars fil hör till en annan mapp, och en mapp med innehåll godtas bara om dess fil hör till just den här mappen. Att en mapp byter namn på Macen räknas som en annan mapp: den kan inte återanvända sin gamla mapp på disken, välj en ny.
+
+Disken ska vara formaterad som APFS, Mac OS Extended eller exFAT.
+
+### Så känns disken igen
+
+Disken känns igen på sitt volym-id, aldrig på namnet. Kopplar du in en annan disk med samma namn händer ingenting. En disk som formaterats om eller bytts ut är en ny disk, och målet måste läggas till igen. Namnet i tabellen och i menyn är bara en visning.
+
+### Inkoppling och utmatning
+
+- När den valda disken kopplas in synkas den direkt.
+- Medan disken är inkopplad följer den samma väntetid som servern.
+- När disken inte är inkopplad visar raden `Inte inkopplad · senast <datum>` och inget försöks. Menyradens ikon påverkas inte av en frånvarande disk.
+- Vid utmatning avbryts en pågående synk, så att disken går att mata ut. Nekar macOS utmatningen återupptar appen synken efter ungefär 20 sekunder.
+- En bevakad mapp som själv ligger på en extern disk synkas inte medan den disken är frånkopplad.
+
+### Format
+
+- **APFS och Mac OS Extended** behåller rättigheter och ägare.
+- **exFAT** behåller inte rättigheter och ägare. Symboliska länkar och alla filnamn fungerar. macOS skapar en fil på 4 kB, `._<namn>`, bredvid varje fil på exFAT. Appen ignorerar dem.
+
+### Raderat på disken
+
+`Raderat/<tidpunkt>/` i mappen på disken fungerar som på servern: raderade och överskrivna filer flyttas dit, ingenting tas bort, och mappen rensas bara för hand. En fil som ersätts av en mapp eller länk med samma namn flyttas också dit först. Begränsning: en symbolisk länk vars mål ändras ersätts utan att den gamla länken sparas.
+
+### Tillstånd
+
+Första gången appen når en extern disk frågar macOS om tillstånd för flyttbara volymer. Svara Tillåt.
+
 ## Bra att veta
 
-- **Byta namn på eller flytta en mapp** inuti en bevakad mapp ser ut som radering plus nya filer. Allt under den laddas upp igen och den gamla kopian hamnar i `Raderat/`. Inget går förlorat, men det tar tid och diskutrymme. Samma sak gäller om du byter namn på mappen på servern eller på Macen: det är en borttagning plus en ny mapp.
+- **Byta namn på eller flytta en mapp** inuti en bevakad mapp ser ut som radering plus nya filer. Allt under den laddas upp igen och den gamla kopian hamnar i `Raderat/`. Inget går förlorat, men det tar tid och diskutrymme. Samma sak gäller om du byter namn på mappen på servern eller på disken, eller på Macen: det är en borttagning plus en ny mapp. Byts namnet på mappen på Macen hör dessutom markören på disken till den gamla mappen, så ett nytt mål på disken måste läggas till.
 - **Filer som ändras ofta** ger en undanflyttad kopia per synktillfälle, som mest ungefär en per minut vid standardinställningen.
-- **`Raderat/` växer** tills du rensar den för hand.
+- **`Raderat/` växer**, på servern och på disken, tills du rensar den för hand.
 - **Avslutas appen stannar synken.** Det som ändras under tiden fångas vid nästa start.
 - **macOS integritetsskydd:** `~/Sync` kräver inget tillstånd. Läggs Skrivbord, Dokument eller Hämtade filer till frågar macOS om lov en gång.
 - **Osignerad app:** appen byggs lokalt och signeras utan utvecklarcertifikat. Det fungerar på den egna Macen men går inte att dela.
@@ -306,6 +352,7 @@ rsync -a användare@server:/home/användare/Sync/Raderat/2026-11-17_143205/rappo
 - **Notiser:** misslyckas synken minst tre gånger i rad kommer en notis vid det första riktiga felet i serien (till exempel full disk), en gång per serie. Är en mapp osynkad i över ett dygn kommer en notis, en gång per dygn.
 - **Ändrade inställningar** (till exempel undantag) nollställer inte en mapps status. En synk som pågår får bli klar om inget som påverkar den har ändrats.
 - **Statusen "Inte inställd"** visas så länge någon mapp inte är inställd, även om andra mappar är synkade.
+- **Frånkopplad disk** ger raden `Inte inkopplad`. Är disken det enda som är kvar att synka visar menyn "Disken är inte inkopplad"; är något annat mål inkopplat gäller statusen för det.
 
 ## Tester
 
@@ -325,18 +372,18 @@ Det använder en temporär lokal mapp och en egen katalog `~/filsynk-interop-e2e
 
 ## Checklista
 
-Gör detta en gång. Anteckna det som inte stämmer. `användare@server` och `/home/användare` står för din egen server.
+Gör detta en gång. Anteckna det som inte stämmer. `användare@server` och `/home/användare` står för din egen server, `Backupdisk` för din egen externa disk.
 
 1. **Installera.** `scripts/build-app.sh --install`, sedan `open /Applications/Filsynk.app`.
 
 2. **Utseende.**
    - Ikonen syns i menyraden och ingen ikon syns i Dock.
-   - Menyn har statusrad överst (till exempel "Allt synkat · 14:32"), en rad per mapp, och sedan Synka nu, Pausa (blir Fortsätt), Inställningar…, Visa logg och Avsluta Filsynk.
+   - Menyn har statusrad överst (till exempel "Allt synkat · 14:32"), en rad per mål (till exempel `~/Sync → Server: ~/Sync   ✓ 14:32`), och sedan Synka nu, Pausa (blir Fortsätt), Inställningar…, Visa logg och Avsluta Filsynk.
    - "Visa logg" öppnar `~/Library/Logs/Filsynk/filsynk.log`.
 
 3. **Inställningar** (ta först bort `~/Library/Application Support/Filsynk/config.json`):
-   1. Inställningarna öppnas av sig själva med raden `~/Sync → ~/Sync`, tom adress och en kort vägledning under Server.
-   2. Skriv `användare@server` och tryck Testa anslutning: `✓ Ansluten, rsync 3.x.y`. `config.json` har nu `remotePath` `/home/användare/Sync`, `verifiedServer`, `verifiedHome` och `verifiedLogicalHome`. Kolumnen "På servern" visar `~/Sync`.
+   1. Inställningarna öppnas av sig själva med en rad i tabellen med `~/Sync` under På Macen och `Server: ~/Sync` under Mål, tom adress och en kort vägledning under Server.
+   2. Skriv `användare@server` och tryck Testa anslutning: `✓ Ansluten, rsync 3.x.y`. `config.json` har nu `remotePath` `/home/användare/Sync`, `verifiedServer`, `verifiedHome` och `verifiedLogicalHome`. Kolumnen Mål visar `Server: ~/Sync`.
    3. Ange en adress som inte finns (`x@192.0.2.1`): `Servern nås inte.` inom cirka 10 sekunder. Ange `x@h;ls`: rött fel, ingenting sparas.
    4. Lägg till en mapp som ligger inuti `~/Sync`: rött fel, ingenting sparas. Ange `~` eller `~/R&D` som mapp på servern: nekas.
    5. Lägg till en mapp med filer som bara finns i iCloud (eller en egen mapp `Raderat` i toppnivån): varningen visas med Lägg till ändå och Avbryt. Avbryt sparar ingenting; Lägg till ändå lägger till mappen och synken startar först då.
@@ -361,6 +408,15 @@ Gör detta en gång. Anteckna det som inte stämmer. `användare@server` och `/h
 
    Punkt 9 ändrar `authorized_keys` på servern och görs för hand där. Ta efteråt bort provfilerna ur `~/Sync` på Macen; de hamnar i `Raderat/` på servern, vilket är avsett.
 
-5. **Felsökning:**
+5. **Extern disk** (en disk som är formaterad som APFS, Mac OS Extended eller exFAT; gör den här delen med en ny, tom mapp på disken):
+   1. Lägg till ett mål: Inställningar → Mappar → **+**, välj en ny mapp på Macen, välj **Extern disk**, **Välj mapp på disken…** och skapa en ny mapp i `/Volumes/Backupdisk`. Texten bredvid knappen blir `Backupdisk: <mappen>`. Raden dyker upp i tabellen med målet `Backupdisk: <mappen>`, och mappen på disken innehåller `.filsynk`. Välj i stället en mapp med innehåll: rött fel, ingenting sparas.
+   2. Se första synken: raden går från `Väntar` till `Synkar…` och sedan `✓ <klockslag>`, och filerna finns på disken.
+   3. Mata ut disken i Finder: pågår en synk avbryts den, utmatningen lyckas och raden visar `Inte inkopplad · senast <datum>`. Menyradens ikon visar inget fel.
+   4. Ändra en fil i mappen på Macen medan disken är utmatad: inget försöks.
+   5. Koppla in disken: synken startar direkt och den ändrade filen kommer ikapp.
+   6. Radera en fil och skriv över en annan på Macen: efter synken ligger de gamla versionerna i `Raderat/<tid>/` i mappen på disken.
+   7. Koppla in en annan disk, med samma namn om det går: ingenting händer, ingen fråga och ingen synk.
+
+6. **Felsökning:**
    - Om appen inte startar vid inloggning: kontrollera under Systeminställningar > Allmänt > Inloggningsobjekt att Filsynk finns och är påslagen, och att appen ligger i `/Applications`. Slå av och på "Starta vid inloggning" i Filsynks inställningar för att registrera den igen.
    - Om notiserna inte visas: kontrollera att Filsynk får visa notiser under Systeminställningar > Notiser. Varje notis skrivs också i loggen, så den går att läsa där via "Visa logg".
