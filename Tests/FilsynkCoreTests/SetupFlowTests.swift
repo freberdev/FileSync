@@ -292,6 +292,19 @@ struct SetupFlowTests {
         #expect(p.calls.isEmpty)
     }
 
+    @Test func addRejectionRefusesRelativeLocalPath() async {
+        let p = ScriptedProcess()
+        let flow = SetupFlow(process: p)
+        let c = config(folders: [])
+        for path in ["Sync", "./Sync", "~/Sync"] {
+            #expect(flow.addRejection(to: c, localPath: path, remoteEntered: "~/A")
+                    == ConfigIssue.localPathNotAbsolute(path).message)
+            let out = await flow.addServerDestination(to: c, localPath: path, remoteEntered: "~/A")
+            #expect(out == .rejected(ConfigIssue.localPathNotAbsolute(path).message))
+        }
+        #expect(!p.contactedServer)
+    }
+
     @Test func addRejectionAcceptsGoodFolder() {
         let p = ScriptedProcess()
         let c = config(folders: [.init(path: "/Users/x/Sync", remotePath: "/home/u/Sync")])

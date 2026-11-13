@@ -71,6 +71,7 @@ public struct SetupFlow: Sendable {
     public func addRejection(to config: Config, localPath: String, remoteEntered: String) -> String? {
         let entered = remoteEntered.trimmingCharacters(in: .whitespacesAndNewlines)
         if !config.isVerified { return "Testa anslutningen först." }
+        guard localPath.hasPrefix("/") else { return ConfigIssue.localPathNotAbsolute(localPath).message }
 
         var candidate = config
         if let index = Self.folderIndex(of: localPath, in: config) {
