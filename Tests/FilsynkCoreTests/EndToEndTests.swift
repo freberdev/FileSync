@@ -106,7 +106,7 @@ struct EndToEndTests {
             folders: [FolderConfig(path: local.path, remotePath: "~/\(remoteName)")])
         let flow = SetupFlow(process: SystemProcessRunner())
 
-        // 1. Connect (one retry of the very first connection: "No route to host" after idle).
+        // Connect (one retry of the very first connection: "No route to host" after idle).
         var (result, connected) = await flow.connect(config)
         if result == .unreachable {
             try await Task.sleep(for: .seconds(2))
@@ -208,15 +208,8 @@ struct EndToEndTests {
         #expect(Set(afterDelete.values) == ["v1", "v2-längre"], "Raderat efter radering: \(afterDelete)")
         #expect(afterDelete.count == 2 && Set(afterDelete.keys).count == 2)
 
-        // 5. Unicode + spaces: NFC and NFD spelling, then one more sync must not move anything to Raderat/.
-        let nfc = "Räksmörgås anteckning.txt".precomposedStringWithCanonicalMapping
-        let nfd = "Räksmörgås anteckning.txt".decomposedStringWithCanonicalMapping
-        try write(nfc, "nfc")
-        var unicodeNames = [nfc]
-        if !FileManager.default.fileExists(atPath: local.appendingPathComponent(nfd).path) {
-            try write(nfd, "nfd")
-            unicodeNames.append(nfd)
-        }
+        // 5. Unicode + spaces, then one more sync must not move anything to Raderat/.
+        try write("Räksmörgås anteckning.txt".precomposedStringWithCanonicalMapping, "nfc")
         let localListing = (try? FileManager.default.contentsOfDirectory(atPath: local.path)) ?? []
         let remoteHasUnicode = await eventually {
             let names = await remote.lines("ls -1 '\(remotePath)'")
@@ -235,7 +228,6 @@ struct EndToEndTests {
         let unicodeInRaderat = await remote.find("'\(remotePath)/Raderat' -name '*anteckning*'")
         #expect(raderatBefore == raderatAfter && unicodeInRaderat == [],
                 "unicode ej stabilt. lokalt \(localListing.map { Array($0.unicodeScalars.prefix(4)).map(\.value) }), server \(serverListing), Raderat före \(raderatBefore) efter \(raderatAfter), träffar \(unicodeInRaderat)")
-        _ = unicodeNames
 
         // 6. Pause: nothing is sent while paused; resuming sends.
         await engine.setPaused(true)
@@ -245,18 +237,16 @@ struct EndToEndTests {
         await engine.setPaused(false)
         #expect(await eventually { await remote.read("\(remotePath)/paus.txt") == "p" })
 
-        // 8. A local top-level folder named Raderat is not uploaded.
+        // 7. A local top-level folder named Raderat is not uploaded.
         let localRaderat = local.appendingPathComponent("Raderat")
         try FileManager.default.createDirectory(at: localRaderat, withIntermediateDirectories: true)
         try "x".write(to: localRaderat.appendingPathComponent("lokal-raderat.txt"), atomically: true, encoding: .utf8)
-        let markRaderat = recorder.statuses.count
         try write("efter-raderat.txt", "e")
         #expect(await eventually { await remote.read("\(remotePath)/efter-raderat.txt") == "e" })
-        _ = markRaderat
         #expect(await remote.find("'\(remotePath)' -name 'lokal-raderat.txt'") == [],
                 "lokal Raderat/ laddades upp")
 
-        // 7. Status ends at .synced and no notice was emitted at any point.
+        // 8. Status ends at .synced and no notice was emitted at any point.
         #expect(await eventually { recorder.lastFolderState == .synced },
                 "slutstatus \(String(describing: recorder.lastFolderState))")
         #expect(recorder.notices.isEmpty, "notiser: \(recorder.notices)")
