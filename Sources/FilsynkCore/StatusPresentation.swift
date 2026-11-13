@@ -81,7 +81,8 @@ public enum StatusPresentation {
     public static func symbolName(_ overall: OverallState) -> String {
         switch overall {
         case .synced: return "checkmark.circle"
-        case .syncing, .pending: return "arrow.triangle.2.circlepath"
+        case .syncing: return "arrow.triangle.2.circlepath"
+        case .pending: return "hourglass"
         case .waitingForServer: return "clock.arrow.circlepath"
         case .error: return "exclamationmark.triangle"
         case .paused: return "pause.circle"

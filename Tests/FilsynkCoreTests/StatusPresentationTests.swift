@@ -43,7 +43,7 @@ import Testing
         #expect(StatusPresentation.symbolName(.syncing) == "arrow.triangle.2.circlepath")
 
         #expect(StatusPresentation.headline(status(.pending), timeZone: utc) == "Ändringar väntar")
-        #expect(StatusPresentation.symbolName(.pending) == "arrow.triangle.2.circlepath")
+        #expect(StatusPresentation.symbolName(.pending) == "hourglass")
 
         #expect(StatusPresentation.headline(status(.waitingForServer), timeZone: utc) == "Väntar på servern")
         #expect(StatusPresentation.symbolName(.waitingForServer) == "clock.arrow.circlepath")
@@ -72,6 +72,10 @@ import Testing
             FolderStatus(path: "~/B", state: .synced, lastSuccess: early),
         ], isPaused: false, configError: nil)
         #expect(StatusPresentation.headline(s, timeZone: utc) == "Allt synkat · 11:00")
+    }
+
+    @Test func waitingForQuietPeriodDoesNotLookLikeARunningSync() {
+        #expect(StatusPresentation.symbolName(.pending) != StatusPresentation.symbolName(.syncing))
     }
 
     @Test func overallPrecedence() {
