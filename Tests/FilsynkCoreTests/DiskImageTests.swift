@@ -7,7 +7,8 @@ import Foundation
 /// `hdiutil attach -mountrandom` på en plats i samma katalog, så att inget hamnar under /Volumes.
 /// Utan `-nobrowse`: en sådan volym räknas som dold och listas inte av `SystemVolumeMonitor`.
 /// Det som testet kopplat in kopplas loss igen med enhetsnoden `hdiutil attach` gav, och
-/// katalogen tas bort, också när ett steg misslyckas.
+/// katalogen tas bort när ingen avbild under den är kvar. Går en avkoppling inte att genomföra
+/// lämnas katalogen kvar och testet säger var och vilka enheter som är inkopplade.
 private enum DiskImageEnvironment {
     static var isEnabled: Bool { ProcessInfo.processInfo.environment["FILSYNK_DISK_IMAGE_TESTS"] == "1" }
 }
@@ -93,6 +94,13 @@ private final class Rig: @unchecked Sendable {
               let entities = (plist as? [String: Any])?["system-entities"] as? [[String: Any]] else {
             throw ImageError(description: "hdiutil attach gav ingen läsbar lista: \(result.stdout)")
         }
+        // Alla enheter avbilden gav noteras först, så att tearDown känner till dem även om något
+        // nedan misslyckas. Hela enheter först. Varje avkoppling kontrollerar ändå ägandet på nytt.
+        let candidates = entities.compactMap { $0["dev-entry"] as? String }.sorted {
+            (Int($0.contains("s", after: "/dev/disk".count) ? 1 : 0), $0)
+                < (Int($1.contains("s", after: "/dev/disk".count) ? 1 : 0), $1)
+        }
+        for dev in candidates where !attachedDevices.contains(dev) { attachedDevices.append(dev) }
         // Enheten måste också vara en som `hdiutil info` säger hör till just den här avbildsfilen.
         // Hela enheter heter disk<N>; avbildens egen har lägst nummer, en syntetiserad APFS-enhet
         // kommer efter den och försvinner med den.
@@ -104,8 +112,6 @@ private final class Rig: @unchecked Sendable {
         }
         let device = wholeDisks.min { $0.0 < $1.0 }?.1
         let mount = entities.compactMap { $0["mount-point"] as? String }.first
-        // Enheten noteras innan något annat kan gå fel, så att den alltid kopplas loss.
-        if let device { attachedDevices.append(device) }
         guard let device, let mount else {
             throw ImageError(description: "hdiutil attach gav ingen enhet eller monteringspunkt: \(result.stdout)")
         }
@@ -239,12 +245,24 @@ private final class Rig: @unchecked Sendable {
             }
             if case .refused(let why) = outcome { problems.append("\(device): \(why)") }
         }
-        if attachedDevices.isEmpty {
-            try? FileManager.default.removeItem(at: root)
-        } else {
+        // Katalogen tas bara bort när `hdiutil info` visar att ingen avbild under den är kvar.
+        let ownRoot = Self.resolved(root.path) + "/"
+        var remaining: [ListedImage] = []
+        var infoFailure: String?
+        do {
+            remaining = try await listedImages().filter { Self.resolved($0.path).hasPrefix(ownRoot) }
+        } catch {
+            infoFailure = "\(error)"
+        }
+        if let infoFailure {
+            problems.append("katalogen \(root.path) lämnades kvar; det gick inte att se vilka avbilder som är kvar: \(infoFailure)")
+        } else if !remaining.isEmpty {
+            let devices = remaining.flatMap(\.devices) + attachedDevices
             problems.append(
                 "katalogen \(root.path) lämnades kvar; enheter som fortfarande är inkopplade: "
-                + "\(attachedDevices.joined(separator: ", ")). Koppla loss dem med hdiutil detach <enhet>.")
+                + "\(devices.joined(separator: ", ")). Koppla loss dem med hdiutil detach <enhet>.")
+        } else {
+            try? FileManager.default.removeItem(at: root)
         }
         return problems
     }
@@ -550,5 +568,12 @@ struct DiskImageTests {
             #expect(rig.recorder.errors.isEmpty, "fel i raden: \(rig.recorder.errors)")
             #expect(rig.recorder.notices.isEmpty, "notiser: \(rig.recorder.notices)")
         }
+    }
+}
+
+private extension String {
+    /// Om något annat än siffror följer efter `offset`, som `s1` i `/dev/disk11s1`.
+    func contains(_ marker: Character, after offset: Int) -> Bool {
+        dropFirst(offset).contains(marker)
     }
 }
