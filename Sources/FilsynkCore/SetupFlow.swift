@@ -199,12 +199,12 @@ public struct SetupFlow: Sendable {
             return reject("Disken måste vara formaterad som APFS, Mac OS Extended eller exFAT.")
         }
         guard let relative = VolumeLookup.relativePath(of: picked, on: volume) else {
-            return reject("Disken saknar id och kan inte användas.")
+            return reject("Mappen ligger inte på disken.")
         }
         if relative.isEmpty { return reject("Välj en mapp på disken, inte diskens rot.") }
 
         guard let destination = Self.realPath(pickedPath), Self.isDirectory(destination) else {
-            return reject("Mappen finns inte.")
+            return reject("Mappen på disken finns inte.")
         }
         guard localPath.hasPrefix("/") else { return reject(ConfigIssue.localPathNotAbsolute(localPath).message) }
         guard let local = Self.realPath(localPath), Self.isDirectory(local) else {

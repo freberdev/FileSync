@@ -630,7 +630,7 @@ final class DiskDestinationTests {
     @Test func rejectsMissingFolder() {
         for path in [disk + "/Saknas", disk + "/Saknas/Djupare"] {
             let out = flow().addDiskDestination(to: config(), localPath: source, pickedPath: path, volumes: volumes)
-            #expect(out == .rejected("Mappen finns inte."))
+            #expect(out == .rejected("Mappen på disken finns inte."))
             #expect(!FileManager.default.fileExists(atPath: path))
         }
     }
@@ -657,7 +657,7 @@ final class DiskDestinationTests {
     @Test func rejectsPickedFileAndMissingSource() throws {
         write(disk + "/fil")
         #expect(flow().diskRejection(to: config(), localPath: source, pickedPath: disk + "/fil", volumes: volumes)
-                == "Mappen finns inte.")
+                == "Mappen på disken finns inte.")
         let target = try makeDirectory(disk + "/Backup")
         #expect(flow().diskRejection(to: config(), localPath: root + "/saknas", pickedPath: target, volumes: volumes)
                 == "Mappen på Macen finns inte.")
