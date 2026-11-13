@@ -1,19 +1,20 @@
 import Foundation
 import Network
 
+/// `onChange` is called for every update, including the first after start; `isMetered` is only
+/// meaningful after the first call. A `start()` after `stop()` delivers a new first update.
 public protocol NetworkMonitoring: AnyObject, Sendable {
     var isMetered: Bool { get }                               // dyr eller begränsad anslutning
-    func start(onChange: @escaping @Sendable () -> Void)      // anropas när nätverket ändras
+    func start(onChange: @escaping @Sendable () -> Void)      // anropas vid varje uppdatering, även den första
     func stop()
 }
 
-/// Network status from `NWPathMonitor`. The first path delivered at start only sets
-/// `isMetered`; `onChange` is called for every later path update.
+/// Network status from `NWPathMonitor`. Every path update, including the first one after
+/// `start()`, sets `isMetered` and then calls `onChange`.
 public final class SystemNetworkMonitor: NetworkMonitoring, @unchecked Sendable {
-    private let lock = NSLock()  // guards `monitor`, `metered`, `seenFirstUpdate`
+    private let lock = NSLock()  // guards `monitor`, `metered`
     private var monitor: NWPathMonitor?
     private var metered = false
-    private var seenFirstUpdate = false
     private let queue = DispatchQueue(label: "dev.freber.filsynk.networkmonitor")
 
     public init() {}
@@ -28,20 +29,17 @@ public final class SystemNetworkMonitor: NetworkMonitoring, @unchecked Sendable 
     public func start(onChange: @escaping @Sendable () -> Void) {
         lock.lock(); defer { lock.unlock() }
         guard monitor == nil else { return }
-        seenFirstUpdate = false
+        metered = false  // no stale value from an earlier start; meaningful after the first update
         let monitor = NWPathMonitor()
         monitor.pathUpdateHandler = { [weak self, weak monitor] path in
             guard let self, let monitor else { return }
             self.lock.lock()
             let isCurrent = self.monitor === monitor
-            var shouldNotify = false
             if isCurrent {
                 self.metered = path.isExpensive || path.isConstrained
-                shouldNotify = self.seenFirstUpdate
-                self.seenFirstUpdate = true
             }
             self.lock.unlock()
-            if shouldNotify { onChange() }
+            if isCurrent { onChange() }
         }
         self.monitor = monitor
         monitor.start(queue: queue)

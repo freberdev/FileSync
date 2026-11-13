@@ -90,20 +90,51 @@ private final class FakeWatchers: @unchecked Sendable {
     }
 }
 
+/// Honours the `NetworkMonitoring` contract: `onChange` is called for every update, including
+/// the first after `start()` (asynchronously). With `withholdsFirstUpdate`, that first delivery
+/// waits until the test calls `releaseFirstUpdate()`.
 private final class FakeNetwork: NetworkMonitoring, @unchecked Sendable {
-    private let lock = NSLock()  // guards `metered`, `callback`
+    private let lock = NSLock()  // guards all state below
     private var metered: Bool
+    private var withholdFirst: Bool
+    private var firstUpdatePending = false
     private var callback: (@Sendable () -> Void)?
 
-    init(metered: Bool = false) { self.metered = metered }
+    init(metered: Bool = false, withholdsFirstUpdate: Bool = false) {
+        self.metered = metered
+        self.withholdFirst = withholdsFirstUpdate
+    }
 
     var isMetered: Bool {
         get { lock.lock(); defer { lock.unlock() }; return metered }
         set { lock.lock(); metered = newValue; lock.unlock() }
     }
 
-    func start(onChange: @escaping @Sendable () -> Void) { lock.lock(); callback = onChange; lock.unlock() }
-    func stop() { lock.lock(); callback = nil; lock.unlock() }
+    /// Applies to the next `start()`.
+    var withholdsFirstUpdate: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return withholdFirst }
+        set { lock.lock(); withholdFirst = newValue; lock.unlock() }
+    }
+
+    func start(onChange: @escaping @Sendable () -> Void) {
+        lock.lock()
+        callback = onChange
+        firstUpdatePending = withholdFirst
+        let deliverNow = !withholdFirst
+        lock.unlock()
+        if deliverNow { DispatchQueue.global().async { onChange() } }
+    }
+
+    func stop() { lock.lock(); callback = nil; firstUpdatePending = false; lock.unlock() }
+
+    /// Delivers the withheld first update after `start()`.
+    func releaseFirstUpdate() {
+        lock.lock()
+        let callback = firstUpdatePending ? callback : nil
+        firstUpdatePending = false
+        lock.unlock()
+        DispatchQueue.global().async { callback?() }
+    }
 
     /// Simulates a network change, delivered from another queue.
     func change() {
@@ -420,5 +451,63 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
         #expect(h.recorder.state(of: Self.pathA) != .syncing)
         #expect(await runner.callCount(Self.pathA) == 1)
         #expect(h.watchers.active.isEmpty)
+    }
+
+    @Test func startupSyncsWaitForFirstNetworkUpdate() async {
+        let network = FakeNetwork(withholdsFirstUpdate: true)
+        let h = Self.make(Self.config([Self.folderA]), network: network)
+        await h.engine.start()
+        await settle()
+        #expect(await h.runner.totalCalls == 0)  // network state unknown: held as if metered
+        #expect(h.recorder.state(of: Self.pathA) == .pending)
+
+        network.releaseFirstUpdate()
+        #expect(await eventually { await h.runner.callCount(Self.pathA) == 1 })
+        await h.engine.stop()
+    }
+
+    @Test func firstNetworkUpdateMeteredKeepsStartupSyncsHeld() async {
+        let network = FakeNetwork(metered: true, withholdsFirstUpdate: true)
+        let h = Self.make(Self.config([Self.folderA]), network: network)
+        await h.engine.start()
+        network.releaseFirstUpdate()
+        await settle()
+        #expect(await h.runner.totalCalls == 0)
+
+        await h.engine.syncNow()
+        #expect(await eventually { await h.runner.callCount(Self.pathA) == 1 })
+        await h.engine.stop()
+    }
+
+    @Test func heldFolderIsReleasedWhenNetworkBecomesUnmetered() async {
+        let network = FakeNetwork(metered: true)
+        let h = Self.make(Self.config([Self.folderA]), network: network)
+        await h.engine.start()
+        await settle()
+        #expect(await h.runner.totalCalls == 0)
+
+        network.isMetered = false
+        network.change()
+        #expect(await eventually { await h.runner.callCount(Self.pathA) == 1 })
+        await h.engine.stop()
+    }
+
+    @Test func restartAfterStopOnMeteredNetworkUsesFreshNetworkState() async {
+        let network = FakeNetwork(metered: true)
+        let h = Self.make(Self.config([Self.folderA]), network: network)
+        await h.engine.start()
+        await settle()
+        #expect(await h.runner.totalCalls == 0)
+        await h.engine.stop()
+
+        // The network became unmetered while stopped; the next start learns it from its first update.
+        network.isMetered = false
+        network.withholdsFirstUpdate = true
+        await h.engine.start()
+        await settle()
+        #expect(await h.runner.totalCalls == 0)
+        network.releaseFirstUpdate()
+        #expect(await eventually { await h.runner.callCount(Self.pathA) == 1 })
+        await h.engine.stop()
     }
 }

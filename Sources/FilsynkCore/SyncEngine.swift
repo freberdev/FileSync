@@ -61,6 +61,8 @@ public actor SyncEngine {
     private var noticePolicy = NoticePolicy()
     private var isRunning = false
     private var isPaused = false
+    /// False from `start()` until the first network update of that start; unknown counts as metered.
+    private var isNetworkKnown = false
     /// Changes on every start/stop; callbacks carrying an older value are ignored.
     private var generation = 0
     private var nextSyncID = 0
@@ -95,6 +97,7 @@ public actor SyncEngine {
     public func start() {
         guard !isRunning else { return }
         isRunning = true
+        isNetworkKnown = false
         generation += 1
         let generation = self.generation
         let now = Date()
@@ -186,6 +189,7 @@ public actor SyncEngine {
 
     private func networkChanged(generation: Int) {
         guard isRunning, generation == self.generation else { return }
+        isNetworkKnown = true
         let now = Date()
         for index in slots.indices where slots[index].participates && slots[index].schedule.isDirty {
             slots[index].schedule.requestImmediate(at: now)
@@ -216,8 +220,9 @@ public actor SyncEngine {
 
     // MARK: Scheduling
 
-    /// Automatic syncs are held while paused or on a metered network.
-    private var isHeld: Bool { isPaused || network.isMetered }
+    /// Automatic syncs are held while paused, on a metered network, or before the first network
+    /// update since `start()` (the network state is not known yet).
+    private var isHeld: Bool { isPaused || !isNetworkKnown || network.isMetered }
 
     /// Starts every folder whose fire date has passed, then sleeps until the next one.
     private func runDue() {
