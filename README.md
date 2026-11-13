@@ -13,6 +13,8 @@ open /Applications/Filsynk.app
 
 Skriptet bygger `build/Filsynk.app`, signerar den lokalt (utan utvecklarcertifikat) och kopierar den till `/Applications`. Utan `--install` byggs bara `build/Filsynk.app`. Appen är inte notariserad och går inte att dela med andra som den är.
 
+Appikonen ligger i `Resources/AppIcon.icns` och ritas av `swift scripts/make-icon.swift`. Kör skriptet igen om du ändrar ritningen.
+
 "Starta vid inloggning" slås på av sig själv vid första start, men bara om appen körs från `/Applications`. Notisfrågan från macOS kommer första gången en notis ska visas.
 
 ## Anslutning

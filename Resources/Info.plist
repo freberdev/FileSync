@@ -6,6 +6,8 @@
     <string>dev.freber.filsynk</string>
     <key>CFBundleName</key>
     <string>Filsynk</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleExecutable</key>
     <string>Filsynk</string>
     <key>CFBundlePackageType</key>
