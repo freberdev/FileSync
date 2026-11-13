@@ -155,6 +155,26 @@ import Testing
         #expect(s.nextFireDate() == t(65))
     }
 
+    @Test func requestDuringSyncStillFiresAfterFailures() {
+        for outcome in [SyncOutcome.unreachable, .failed("x")] {
+            var s = makeSchedule()
+            s.changeDetected(at: t(0)); s.syncStarted(at: t(60))
+            s.requestImmediate(at: t(65))
+            s.syncFinished(outcome, at: t(70))
+            #expect(s.nextFireDate() == t(65))
+        }
+    }
+
+    @Test func requestDuringSyncIsDroppedWhenLoginIsDenied() {
+        var s = makeSchedule()
+        s.changeDetected(at: t(0)); s.syncStarted(at: t(60))
+        s.requestImmediate(at: t(65))
+        s.syncFinished(.authDenied, at: t(70))
+        #expect(s.nextFireDate() == t(970))
+        s.requestImmediate(at: t(100))
+        #expect(s.nextFireDate() == t(100))
+    }
+
     @Test func maxWaitCountsFromFirstChangeSinceLastStart() {
         var s = makeSchedule()
         s.changeDetected(at: t(0)); s.syncStarted(at: t(60)); s.syncFinished(.success, at: t(61))

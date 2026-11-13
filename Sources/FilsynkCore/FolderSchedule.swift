@@ -83,6 +83,8 @@ public struct FolderSchedule: Equatable, Sendable {
             // A denied login waits the longest step: repeated refused logins can get the Mac banned.
             let step = outcome == .authDenied ? backoff.count : min(failureCount, backoff.count)
             retryAt = date.addingTimeInterval(backoff[step - 1])
+            // A request made while the denied login was running must not retry it at once.
+            if outcome == .authDenied { immediateAt = nil }
         }
         dirtySinceAtStart = nil
     }
