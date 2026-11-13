@@ -30,7 +30,7 @@ public enum DiskMarker {
     }
 
     /// Mappen som markören säger att målet hör till (dess första rad), eller nil när det inte finns
-    /// någon giltig markör: filen saknas, är inte en vanlig fil, går inte att läsa eller är tom.
+    /// någon giltig markör: filen saknas, är inte en vanlig fil, går inte att läsa eller första raden är tom eller bara blanktecken.
     public static func folder(in destination: String) -> String? {
         let path = markerPath(in: destination)
         var info = stat()
@@ -41,10 +41,17 @@ public enum DiskMarker {
         var buffer = [UInt8](repeating: 0, count: 4096)
         let n = read(fd, &buffer, buffer.count)
         guard n > 0 else { return nil }
-        let text = String(decoding: buffer[0..<n], as: UTF8.self)
-        let first = text.split(separator: "\n", omittingEmptySubsequences: false).first.map(String.init) ?? ""
-        let trimmed = first.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        // Första raden precis som den skrevs, eftersom ett mappnamn kan börja eller sluta med mellanslag.
+        // Bara "\r" i ett CRLF-radslut tas bort. Delas på byten, eftersom Swift ser "\r\n" som ett tecken.
+        var line = buffer[0..<n].prefix { $0 != UInt8(ascii: "\n") }
+        if line.last == UInt8(ascii: "\r") { line = line.dropLast() }
+        let first = String(decoding: line, as: UTF8.self)
+        return first.allSatisfy(\.isWhitespace) ? nil : first
+    }
+
+    /// Sant när sökvägen kan stå som markörens första rad, alltså saknar radbrytning.
+    public static func canRecord(_ folder: String) -> Bool {
+        !folder.unicodeScalars.contains { $0 == "\n" || $0 == "\r" }
     }
 
     public static func exists(in destination: String) -> Bool {

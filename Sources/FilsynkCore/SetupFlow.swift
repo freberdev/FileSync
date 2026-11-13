@@ -209,6 +209,9 @@ public struct SetupFlow: Sendable {
         guard let local = Self.realPath(localPath), Self.isDirectory(local) else {
             return reject("Mappen på Macen finns inte.")
         }
+        if !DiskMarker.canRecord(local) {
+            return reject("Mappen på Macen har en radbrytning i namnet och kan inte användas.")
+        }
 
         // A folder with content is only taken over when its marker names this very folder; a marker
         // naming another folder never is, since the first mirror would move that backup away.

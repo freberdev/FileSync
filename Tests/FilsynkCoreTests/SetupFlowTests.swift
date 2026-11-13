@@ -622,6 +622,25 @@ final class DiskDestinationTests {
         }
     }
 
+    @Test func folderWhoseNameEndsInSpaceCanBeAddedAgain() throws {
+        let spaced = try makeDirectory(root + "/Foton ")
+        let target = try makeDirectory(disk + "/Backup")
+        let out = flow().addDiskDestination(to: config(), localPath: spaced, pickedPath: target, volumes: volumes)
+        guard case .added = out else { Issue.record("expected added, got \(out)"); return }
+        #expect(DiskMarker.folder(in: target) == spaced)
+        #expect(flow().diskRejection(to: config(), localPath: spaced, pickedPath: target, volumes: volumes) == nil)
+    }
+
+    @Test func rejectsLocalFolderWithLineBreakInItsPath() throws {
+        let target = try makeDirectory(disk + "/Backup")
+        for name in ["Rad\nbrytning", "Rad\r\nbrytning", "Slut\r"] {
+            let local = try makeDirectory(root + "/" + name)
+            let out = flow().addDiskDestination(to: config(), localPath: local, pickedPath: target, volumes: volumes)
+            #expect(out == .rejected("Mappen på Macen har en radbrytning i namnet och kan inte användas."))
+            #expect(!DiskMarker.exists(in: target))
+        }
+    }
+
     @Test func rejectsPickedFileAndMissingSource() throws {
         write(disk + "/fil")
         #expect(flow().diskRejection(to: config(), localPath: source, pickedPath: disk + "/fil", volumes: volumes)

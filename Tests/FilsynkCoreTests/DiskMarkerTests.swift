@@ -57,6 +57,24 @@ struct DiskMarkerTests {
         #expect(DiskMarker.folder(in: dir + "/") == "/Users/x/Mina filer")
     }
 
+    @Test func keepsSpacesAtTheEndsOfTheRecordedFolder() throws {
+        let dir = try makeDirectory()
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        try DiskMarker.write(in: dir, folder: "/Users/x/Foton ")
+        #expect(DiskMarker.folder(in: dir) == "/Users/x/Foton ")
+        let other = try makeDirectory()
+        defer { try? FileManager.default.removeItem(atPath: other) }
+        try DiskMarker.write(in: other, folder: "/Users/x/ A\t")
+        #expect(DiskMarker.folder(in: other) == "/Users/x/ A\t")
+    }
+
+    @Test func readsMarkerWithWindowsLineEndings() throws {
+        let dir = try makeDirectory()
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        try "/Users/x/A \r\n2026-01-01T00:00:00Z\r\n".write(toFile: dir + "/.filsynk", atomically: true, encoding: .utf8)
+        #expect(DiskMarker.folder(in: dir) == "/Users/x/A ")
+    }
+
     @Test func emptyOrBlankMarkerIsNoMarker() throws {
         let dir = try makeDirectory()
         defer { try? FileManager.default.removeItem(atPath: dir) }
