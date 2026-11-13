@@ -15,7 +15,10 @@ codesign --force --sign - "$APP"
 echo "Built $APP"
 
 if [ "${1:-}" = "--install" ]; then
-    osascript -e 'tell application "Filsynk" to quit' 2>/dev/null || true
+    # Only ask a running app to quit; "tell application" would otherwise launch it.
+    if pgrep -x Filsynk >/dev/null; then
+        osascript -e 'tell application "Filsynk" to quit' 2>/dev/null || true
+    fi
     for _ in 1 2 3 4 5 6 7 8 9 10; do
         pgrep -x Filsynk >/dev/null || break
         sleep 0.5

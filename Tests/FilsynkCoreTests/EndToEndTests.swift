@@ -50,6 +50,16 @@ private struct Remote {
 
     func exists(_ path: String) async -> Bool { (try? await run("test -e '\(path)'"))?.exitCode == 0 }
 
+    /// True only when ssh succeeded and `test -e` answered "no" (exit 1). An ssh failure (255)
+    /// or any other error is not absence.
+    func isAbsent(_ path: String) async -> Bool { (try? await run("test -e '\(path)'"))?.exitCode == 1 }
+
+    /// Names printed by `find`, or nil when ssh/find failed (so "nothing found" cannot be vacuous).
+    func find(_ args: String) async -> [String]? {
+        guard let out = await output("find \(args)") else { return nil }
+        return out.split(whereSeparator: \.isNewline).map(String.init)
+    }
+
     /// Deletes the test directory, and only that: last component starts with filsynk-interop-e2e-
     /// and the parent is the remote home.
     func cleanUp(_ path: String) async -> String? {
@@ -105,27 +115,41 @@ struct EndToEndTests {
         config = connected
         let remotePath = config.folders[0].remotePath
 
+        let recorder = Recorder()
+        let engine = SyncEngine(
+            config: config,
+            timing: EngineTiming(quiet: 1, maxWait: 5, backoff: [2, 4], noticeCheckInterval: 60),
+            runner: SyncRunner(process: SystemProcessRunner(), target: .ssh),
+            makeWatcher: { path, onChange in FolderWatcher(path: path, onChange: onChange) },
+            network: SystemNetworkMonitor(),
+            onStatus: { recorder.status($0) },
+            onNotice: { recorder.notice($0) })
+
         var failure: (any Error)?
         do {
             try await scenarios(
-                remote: remote, config: config, result: result, local: local,
+                remote: remote, isVerified: config.isVerified, result: result, local: local, engine: engine, recorder: recorder,
                 remotePath: remotePath, remoteName: remoteName)
         } catch {
             failure = error
         }
+
+        // The engine must be stopped, and its rsync gone, before anything is deleted.
+        await engine.stop()
+        try? await Task.sleep(for: .seconds(2))
 
         // Cleanup: always, and only our own directory.
         let cleanupProblem = remotePath.hasPrefix("/") ? await remote.cleanUp(remotePath) : nil
         try? FileManager.default.removeItem(at: local)
         #expect(cleanupProblem == nil, Comment(rawValue: cleanupProblem ?? ""))
         if remotePath.hasPrefix("/") {
-            #expect(await remote.exists(remotePath) == false, "testkatalogen finns kvar på servern")
+            #expect(await remote.isAbsent(remotePath), "testkatalogen finns kvar på servern")
         }
         if let failure { throw failure }
     }
 
     private func scenarios(
-        remote: Remote, config: Config, result: ConnectionResult, local: URL,
+        remote: Remote, isVerified: Bool, result: ConnectionResult, local: URL, engine: SyncEngine, recorder: Recorder,
         remotePath: String, remoteName: String
     ) async throws {
         // 1. Connection result, verified config, absolute remote path.
@@ -134,20 +158,9 @@ struct EndToEndTests {
             throw CancellationError()
         }
         #expect(version.hasPrefix("3."), "rsync-version \(version)")
-        #expect(config.isVerified)
+        #expect(isVerified)
         #expect(remotePath.hasPrefix("/") && remotePath.hasSuffix("/" + remoteName), "remotePath \(remotePath)")
         try #require(remotePath.hasPrefix("/"))
-
-        let recorder = Recorder()
-        let runner = SyncRunner(process: SystemProcessRunner(), target: .ssh)
-        let engine = SyncEngine(
-            config: config,
-            timing: EngineTiming(quiet: 1, maxWait: 5, backoff: [2, 4], noticeCheckInterval: 60),
-            runner: runner,
-            makeWatcher: { path, onChange in FolderWatcher(path: path, onChange: onChange) },
-            network: SystemNetworkMonitor(),
-            onStatus: { recorder.status($0) },
-            onNotice: { recorder.notice($0) })
 
         func rm(_ name: String) { try? FileManager.default.removeItem(at: local.appendingPathComponent(name)) }
         func write(_ name: String, _ text: String) throws {
@@ -189,7 +202,7 @@ struct EndToEndTests {
 
         // 4. Delete -> gone, a second Raderat/<timestamp>/ holds v2.
         rm("prov.txt")
-        #expect(await eventually { await remote.exists("\(remotePath)/prov.txt") == false })
+        #expect(await eventually { await remote.isAbsent("\(remotePath)/prov.txt") })
         #expect(await eventually { await raderatFiles(named: "prov.txt").count == 2 })
         let afterDelete = await raderatFiles(named: "prov.txt")
         #expect(Set(afterDelete.values) == ["v1", "v2-längre"], "Raderat efter radering: \(afterDelete)")
@@ -219,8 +232,8 @@ struct EndToEndTests {
         await engine.syncNow()
         #expect(await waitForSyncCycle(after: mark), "syncNow gav ingen synkcykel")
         let raderatAfter = await raderatDirs()
-        let unicodeInRaderat = await remote.lines("find '\(remotePath)/Raderat' -name '*anteckning*'")
-        #expect(raderatBefore == raderatAfter && unicodeInRaderat.isEmpty,
+        let unicodeInRaderat = await remote.find("'\(remotePath)/Raderat' -name '*anteckning*'")
+        #expect(raderatBefore == raderatAfter && unicodeInRaderat == [],
                 "unicode ej stabilt. lokalt \(localListing.map { Array($0.unicodeScalars.prefix(4)).map(\.value) }), server \(serverListing), Raderat före \(raderatBefore) efter \(raderatAfter), träffar \(unicodeInRaderat)")
         _ = unicodeNames
 
@@ -228,7 +241,7 @@ struct EndToEndTests {
         await engine.setPaused(true)
         try write("paus.txt", "p")
         try await Task.sleep(for: .seconds(6))
-        #expect(await remote.exists("\(remotePath)/paus.txt") == false, "paus.txt skickades under pausen")
+        #expect(await remote.isAbsent("\(remotePath)/paus.txt"), "paus.txt skickades under pausen")
         await engine.setPaused(false)
         #expect(await eventually { await remote.read("\(remotePath)/paus.txt") == "p" })
 
@@ -240,14 +253,12 @@ struct EndToEndTests {
         try write("efter-raderat.txt", "e")
         #expect(await eventually { await remote.read("\(remotePath)/efter-raderat.txt") == "e" })
         _ = markRaderat
-        #expect(await remote.lines("find '\(remotePath)' -name 'lokal-raderat.txt'").isEmpty,
+        #expect(await remote.find("'\(remotePath)' -name 'lokal-raderat.txt'") == [],
                 "lokal Raderat/ laddades upp")
 
         // 7. Status ends at .synced and no notice was emitted at any point.
         #expect(await eventually { recorder.lastFolderState == .synced },
                 "slutstatus \(String(describing: recorder.lastFolderState))")
         #expect(recorder.notices.isEmpty, "notiser: \(recorder.notices)")
-
-        await engine.stop()
     }
 }
