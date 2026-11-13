@@ -36,7 +36,8 @@ public struct EngineStatus: Equatable, Sendable {
 
     public var overall: OverallState {
         if let configError { return .error(configError) }
-        if folders.allSatisfy({ $0.state == .notConfigured }) { return .notConfigured }
+        // A folder that is not set up is not backed up, whatever the others do.
+        if folders.isEmpty || folders.contains(where: { $0.state == .notConfigured }) { return .notConfigured }
         if isPaused { return .paused }
         for folder in folders {
             if case .error(let message) = folder.state { return .error(message) }

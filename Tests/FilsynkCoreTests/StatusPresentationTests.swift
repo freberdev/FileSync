@@ -95,6 +95,19 @@ import Testing
             FolderStatus(path: "~/B", state: .waitingForServer, lastSuccess: nil),
         ], isPaused: false, configError: nil)
         #expect(order.overall == .waitingForServer)
+
+        // One folder not set up outweighs everything but a config error.
+        var partly = EngineStatus(folders: [
+            FolderStatus(path: "~/A", state: .synced, lastSuccess: t0),
+            FolderStatus(path: "~/B", state: .notConfigured, lastSuccess: nil),
+        ], isPaused: false, configError: nil)
+        #expect(partly.overall == .notConfigured)
+        #expect(StatusPresentation.headline(partly, timeZone: utc) == "Inte inställd")
+        partly.folders[0].state = .error("x")
+        partly.isPaused = true
+        #expect(partly.overall == .notConfigured)
+        partly.configError = "Kunde inte läsa konfigurationen"
+        #expect(partly.overall == .error("Kunde inte läsa konfigurationen"))
     }
 
     @Test func noReadyFoldersIsNotConfigured() {
