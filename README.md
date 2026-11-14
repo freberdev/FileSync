@@ -29,6 +29,12 @@ Skriptet bygger appen och lägger den i `build/Filsynk-<version>.dmg` tillsamman
 
 Varje push till `main`, alltså också varje merge dit, kör testerna på GitHub, bygger diskavbilden och lägger upp den som en release med namnet `v<version>-<körningens nummer>`. Ändras bara dokumentation (`*.md` och `docs/`) körs ingenting. Flödet ligger i `.github/workflows/release.yml`.
 
+Flödet går också att starta för hand, till exempel när hemligheterna just har lagts in: under Actions → Release → Run workflow, eller med
+
+```bash
+gh workflow run release.yml
+```
+
 Flödet har två jobb:
 
 1. **test** kör `swift test`. Det har inte tillgång till några hemligheter.

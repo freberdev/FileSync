@@ -1,7 +1,8 @@
 name: Release
 
 # Every push to main (a merge is a push) that changes more than documentation
-# runs the tests, builds the disk image and publishes it as a release.
+# runs the tests, builds the disk image and publishes it as a release. It can
+# also be started by hand from the Actions tab, or with "gh workflow run release.yml".
 #
 # The signing certificate and the notarization key are secrets of the environment
 # "release". That environment only accepts runs from main and waits for approval,
@@ -14,6 +15,7 @@ on:
     paths-ignore:
       - "**.md"
       - "docs/**"
+  workflow_dispatch:
 
 permissions:
   contents: read
