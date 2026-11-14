@@ -1,0 +1,42 @@
+name: Release
+
+# Every push to main (a merge is a push) that changes more than documentation
+# runs the tests, builds the disk image and publishes it as a release.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Toolchain
+        run: swift --version
+
+      - name: Test
+        run: swift test
+
+      - name: Build disk image
+        run: |
+          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
+          name="Filsynk-$version-$GITHUB_RUN_NUMBER"
+          scripts/build-dmg.sh "$name"
+          echo "TAG=v$version-$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+          echo "DMG=build/$name.dmg" >> "$GITHUB_ENV"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$TAG" "$DMG" --target "$GITHUB_SHA" --title "Filsynk $TAG" --generate-notes

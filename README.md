@@ -17,6 +17,25 @@ Appikonen ligger i `Resources/AppIcon.icns` och ritas av `swift scripts/make-ico
 
 "Starta vid inloggning" slås på av sig själv vid första start, men bara om appen körs från `/Applications`. Notisfrågan från macOS kommer första gången en notis ska visas.
 
+### Diskavbild
+
+```bash
+scripts/build-dmg.sh
+```
+
+Skriptet bygger appen och lägger den i `build/Filsynk-<version>.dmg` tillsammans med en genväg till Program. Öppna filen och dra Filsynk till Program.
+
+### Release på GitHub
+
+Varje push till `main`, alltså också varje merge dit, kör testerna på GitHub, bygger diskavbilden och lägger upp den som en release med namnet `v<version>-<körningens nummer>`. Ändras bara dokumentation (`*.md` och `docs/`) körs ingenting. Flödet ligger i `.github/workflows/release.yml`.
+
+Bra att veta om en nedladdad diskavbild:
+
+- **Den är signerad utan certifikat och inte notariserad.** Första gången vägrar macOS öppna appen. Gå till Systeminställningar → Integritet och säkerhet och välj **Öppna ändå**.
+- **Tillstånden frågas om för varje ny version**, eftersom varje bygge utan certifikat räknas som en ny app. Bygger du själv med certifikat, se Signering nedan, ligger de kvar.
+- **Den är byggd för Apple Silicon.**
+- **Versionen** kommer från `CFBundleShortVersionString` i `Resources/Info.plist`.
+
 ## Signering
 
 Byggskriptet signerar alltid appen. Frågan är bara om det sker med eller utan certifikat. Appen fungerar lika bra i båda fallen.
