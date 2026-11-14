@@ -411,4 +411,57 @@ import Foundation
             #expect(read(a.raderat(ts, "d")) == "en fil där mappen skulle ligga")
         }
     }
+
+    // rsync i macOS 15 listar en borttagen mapp utan avslutande snedstreck.
+    @Test func foldersListedWithoutSlashAreRemovedWhenEmptied() throws {
+        try withArea { a in
+            try write(a.dst("gammal/djup/f.txt"), "f")
+            try write(a.dst("gammal/g.txt"), "g")
+            try fm.createDirectory(atPath: a.dst("tom"), withIntermediateDirectories: true)
+            let report = try RaderatMover.move(
+                ["gammal/djup/f.txt", "gammal/djup", "gammal/g.txt", "gammal", "tom"],
+                source: a.source, destination: a.destination, timestamp: ts)
+            #expect(!exists(a.dst("gammal")))
+            #expect(!exists(a.dst("tom")))
+            #expect(read(a.raderat(ts, "gammal/djup/f.txt")) == "f")
+            #expect(read(a.raderat(ts, "gammal/g.txt")) == "g")
+            #expect(!exists(a.raderat(ts, "tom")))
+            #expect(report.moved == ["gammal/djup/f.txt", "gammal/g.txt"])
+            #expect(report.removedDirectories == ["gammal/djup", "gammal", "tom"])
+            #expect(report.kept.isEmpty)
+        }
+    }
+
+    @Test func folderListedWithoutSlashBeforeItsContentsIsHandledTheSame() throws {
+        try withArea { a in
+            try write(a.dst("gammal/g.txt"), "g")
+            _ = try RaderatMover.move(
+                ["gammal", "gammal/g.txt"], source: a.source, destination: a.destination, timestamp: ts)
+            #expect(!exists(a.dst("gammal")))
+            #expect(read(a.raderat(ts, "gammal/g.txt")) == "g")
+        }
+    }
+
+    @Test func folderListedWithoutSlashThatStillHoldsSomethingStays() throws {
+        try withArea { a in
+            try write(a.dst("gammal/kvar.txt"), "inte listad")
+            let report = try RaderatMover.move(
+                ["gammal"], source: a.source, destination: a.destination, timestamp: ts)
+            #expect(read(a.dst("gammal/kvar.txt")) == "inte listad")
+            #expect(!exists(a.destination + "/Raderat"))
+            #expect(report.kept == ["gammal"])
+        }
+    }
+
+    @Test func linkToFolderListedWithoutSlashIsMovedAsALink() throws {
+        try withArea { a in
+            try write(a.dst("riktig/f.txt"), "f")
+            try write(a.src("riktig/f.txt"), "f")
+            try fm.createSymbolicLink(atPath: a.dst("lank"), withDestinationPath: "riktig")
+            _ = try RaderatMover.move(["lank"], source: a.source, destination: a.destination, timestamp: ts)
+            #expect(!exists(a.dst("lank")))
+            #expect((try? fm.destinationOfSymbolicLink(atPath: a.raderat(ts, "lank"))) == "riktig")
+            #expect(read(a.dst("riktig/f.txt")) == "f")
+        }
+    }
 }

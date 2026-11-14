@@ -45,7 +45,12 @@ public enum RaderatMover {
         var report = MoveReport()
         var files: [Candidate] = [], folders: [Candidate] = []
         for entry in listed {
-            guard let c = Candidate(entry) else { report.kept.append(entry); continue }
+            guard var c = Candidate(entry) else { report.kept.append(entry); continue }
+            // Snedstrecket räcker inte: rsync i macOS 15 listar en mapp utan. Det som är en riktig
+            // mapp i målet behandlas som en mapp: den tas bara bort när den är tom.
+            if !c.isFolder, case .entry(let info) = lookup(dst + "/" + c.relative), info.isDirectory {
+                c.isFolder = true
+            }
             if c.isFolder { folders.append(c) } else { files.append(c) }
         }
         // Djupast först; lika djupa behåller listans ordning.
@@ -91,7 +96,7 @@ public enum RaderatMover {
     private struct Candidate {
         let listed: String
         let components: [String]
-        let isFolder: Bool
+        var isFolder: Bool
         var relative: String { components.joined(separator: "/") }
 
         init?(_ listed: String) {
