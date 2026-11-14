@@ -2,6 +2,12 @@ name: Release
 
 # Every push to main (a merge is a push) that changes more than documentation
 # runs the tests, builds the disk image and publishes it as a release.
+#
+# The signing certificate and the notarization key are secrets of the environment
+# "release". That environment only accepts runs from main and waits for approval,
+# so nothing that has not been merged and approved can reach them. The tests run
+# in a job of their own, without the environment. The certificate is imported
+# after the app has been built, and is removed again as soon as it has signed.
 on:
   push:
     branches: [main]
@@ -10,17 +16,19 @@ on:
       - "docs/**"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
-  release:
+  test:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Toolchain
         run: swift --version
@@ -28,15 +36,84 @@ jobs:
       - name: Test
         run: swift test
 
-      - name: Build disk image
-        run: |
-          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
-          name="Filsynk-$version-$GITHUB_RUN_NUMBER"
-          scripts/build-dmg.sh "$name"
-          echo "TAG=v$version-$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
-          echo "DMG=build/$name.dmg" >> "$GITHUB_ENV"
+  release:
+    needs: test
+    runs-on: macos-latest
+    environment: release
+    permissions:
+      contents: write
+    env:
+      HAS_CERTIFICATE: ${{ secrets.SIGN_CERT_P12_BASE64 != '' }}
+      HAS_NOTARY_KEY: ${{ secrets.NOTARY_KEY_P8_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
-      - name: Publish release
+      - name: Build the app
+        run: |
+          scripts/build-app.sh
+          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
+          echo "NAME=Filsynk-$version-$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+          echo "TAG=v$version-$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+          echo "KEYCHAIN=$RUNNER_TEMP/release.keychain-db" >> "$GITHUB_ENV"
+
+      - name: Import the certificate
+        if: env.HAS_CERTIFICATE == 'true'
+        env:
+          SIGN_CERT_P12_BASE64: ${{ secrets.SIGN_CERT_P12_BASE64 }}
+          SIGN_CERT_PASSWORD: ${{ secrets.SIGN_CERT_PASSWORD }}
+        run: |
+          keychain_password="$(uuidgen)"
+          security create-keychain -p "$keychain_password" "$KEYCHAIN"
+          security set-keychain-settings -lut 1800 "$KEYCHAIN"
+          security unlock-keychain -p "$keychain_password" "$KEYCHAIN"
+          printf '%s' "$SIGN_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$KEYCHAIN" -P "$SIGN_CERT_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          identity="$(security find-identity -v -p codesigning "$KEYCHAIN" | awk '/Developer ID Application/ { print $2; exit }')"
+          if [ -z "$identity" ]; then
+            echo "The certificate is not a valid Developer ID Application certificate." >&2
+            exit 1
+          fi
+          echo "SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+
+      - name: Sign the app
+        if: env.HAS_CERTIFICATE == 'true'
+        run: |
+          codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" build/Filsynk.app
+          codesign --verify --strict --verbose=2 build/Filsynk.app
+
+      - name: Build the disk image
+        run: scripts/build-dmg.sh --no-build "$NAME"
+
+      - name: Sign the disk image
+        if: env.HAS_CERTIFICATE == 'true'
+        run: codesign --force --timestamp --sign "$SIGN_IDENTITY" "build/$NAME.dmg"
+
+      - name: Remove the certificate
+        if: always()
+        run: |
+          if [ -f "$KEYCHAIN" ]; then
+            security delete-keychain "$KEYCHAIN"
+          fi
+
+      - name: Notarize
+        if: env.HAS_CERTIFICATE == 'true' && env.HAS_NOTARY_KEY == 'true'
+        env:
+          NOTARY_KEY_P8_BASE64: ${{ secrets.NOTARY_KEY_P8_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          key="$RUNNER_TEMP/notary.p8"
+          trap 'rm -f "$key"' EXIT
+          printf '%s' "$NOTARY_KEY_P8_BASE64" | base64 --decode > "$key"
+          xcrun notarytool submit "build/$NAME.dmg" --key "$key" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" --wait
+          xcrun stapler staple "build/$NAME.dmg"
+
+      - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$TAG" "$DMG" --target "$GITHUB_SHA" --title "Filsynk $TAG" --generate-notes
+        run: gh release create "$TAG" "build/$NAME.dmg" --target "$GITHUB_SHA" --title "Filsynk $TAG" --generate-notes

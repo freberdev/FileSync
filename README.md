@@ -11,7 +11,7 @@ scripts/build-app.sh --install
 open /Applications/Filsynk.app
 ```
 
-Skriptet bygger `build/Filsynk.app`, signerar den och kopierar den till `/Applications`. Utan `--install` byggs bara `build/Filsynk.app`. Appen är inte notariserad och går inte att dela med andra som den är.
+Skriptet bygger `build/Filsynk.app`, signerar den och kopierar den till `/Applications`. Utan `--install` byggs bara `build/Filsynk.app`. Ett lokalt bygge är inte notariserat och går inte att dela med andra som det är; det gör releasen på GitHub, se nedan.
 
 Appikonen ligger i `Resources/AppIcon.icns` och ritas av `swift scripts/make-icon.swift`. Kör skriptet igen om du ändrar ritningen.
 
@@ -29,12 +29,73 @@ Skriptet bygger appen och lägger den i `build/Filsynk-<version>.dmg` tillsamman
 
 Varje push till `main`, alltså också varje merge dit, kör testerna på GitHub, bygger diskavbilden och lägger upp den som en release med namnet `v<version>-<körningens nummer>`. Ändras bara dokumentation (`*.md` och `docs/`) körs ingenting. Flödet ligger i `.github/workflows/release.yml`.
 
-Bra att veta om en nedladdad diskavbild:
+Flödet har två jobb:
+
+1. **test** kör `swift test`. Det har inte tillgång till några hemligheter.
+2. **release** bygger appen, signerar den, bygger diskavbilden, låter Apple notarisera den och skapar releasen. Det körs i miljön `release`.
+
+Versionen i namnet kommer från `CFBundleShortVersionString` i `Resources/Info.plist`. Diskavbilden är byggd för Apple Silicon.
+
+#### Signerad och notariserad release
+
+Finns certifikatet inlagt signeras appen och diskavbilden med det, och finns nyckeln för notarisering godkänns diskavbilden av Apple. Då öppnas appen utan varning på vilken Mac som helst, och tillstånden ligger kvar mellan versionerna. Saknas certifikatet signeras appen utan, se Bra att veta nedan.
+
+Certifikatet och nyckeln ligger som hemligheter i miljön `release` på GitHub, aldrig i repot. Den som klonar eller forkar repot kommer inte åt dem. Miljön tar bara emot körningar från `main`. Certifikatet läses in först när appen redan är byggd och tas bort igen så fort det har signerat.
+
+Det här behövs, en gång:
+
+1. **Ett Developer ID Application-certifikat.** Enklast i Xcode: Settings → Accounts → välj teamet → Manage Certificates → **+** → Developer ID Application. Bara kontoinnehavaren kan skapa det. Ett Apple Development-certifikat duger inte här.
+2. **Exportera det** ur Nyckelhanteraren: högerklicka på certifikatet under Mina certifikat → Exportera → filformat `.p12`, och välj ett lösenord för filen.
+3. **Lägg in det** som hemligheter. Värdena läses från filen och från en dold fråga, så de hamnar inte i skalets historik:
+
+   ```bash
+   base64 -i DeveloperID.p12 | gh secret set SIGN_CERT_P12_BASE64 --env release
+   ```
+
+   ```bash
+   gh secret set SIGN_CERT_PASSWORD --env release
+   ```
+
+4. **En API-nyckel för notariseringen.** App Store Connect → Användare och åtkomst → Integreringar → App Store Connect API → skapa en teamnyckel med rollen Developer. Ladda ner filen `AuthKey_<nyckel-id>.p8`; det går bara en gång. Nyckelns id och Issuer ID står på samma sida.
+5. **Lägg in den:**
+
+   ```bash
+   base64 -i AuthKey_<nyckel-id>.p8 | gh secret set NOTARY_KEY_P8_BASE64 --env release
+   ```
+
+   ```bash
+   gh secret set NOTARY_KEY_ID --env release
+   ```
+
+   ```bash
+   gh secret set NOTARY_ISSUER_ID --env release
+   ```
+
+6. **Ta bort filerna** `.p12` och `.p8` från disken, eller lägg dem i lösenordshanteraren.
+
+Kontrollera en nedladdad diskavbild:
+
+```bash
+spctl --assess --type open --context context:primary-signature --verbose=2 Filsynk-<version>-<nummer>.dmg
+```
+
+Utskriften ska säga `accepted` och `source=Notarized Developer ID`.
+
+#### Godkännande före release
+
+Miljön `release` kan kräva att du godkänner varje release med ett klick innan jobbet får tillgång till hemligheterna: Settings → Environments → release → Required reviewers. GitHub erbjuder det för publika repon, och för privata bara i de större abonnemangen.
+
+#### Håll hemligheterna säkra
+
+- **Läs varje ändring av `.github/` och `scripts/` innan den slås ihop till `main`.** Det som körs i release-jobbet körs på samma maskin som certifikatet.
+- **Ge ingen annan skrivrätt till repot.** Den som får pusha kan ändra flödet.
+- **Lägg aldrig till en utlösare för pull requests** i flödet med hemligheterna.
+- **Läcker certifikatet** drar du in det på developer.apple.com och skapar ett nytt.
+
+#### Bra att veta om en release utan certifikat
 
 - **Den är signerad utan certifikat och inte notariserad.** Första gången vägrar macOS öppna appen. Gå till Systeminställningar → Integritet och säkerhet och välj **Öppna ändå**.
-- **Tillstånden frågas om för varje ny version**, eftersom varje bygge utan certifikat räknas som en ny app. Bygger du själv med certifikat, se Signering nedan, ligger de kvar.
-- **Den är byggd för Apple Silicon.**
-- **Versionen** kommer från `CFBundleShortVersionString` i `Resources/Info.plist`.
+- **Tillstånden frågas om för varje ny version**, eftersom varje bygge utan certifikat räknas som en ny app.
 
 ## Signering
 

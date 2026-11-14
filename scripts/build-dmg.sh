@@ -1,10 +1,16 @@
 #!/bin/bash
 # Builds build/Filsynk-<version>.dmg with the app and a link to /Applications.
 # With a name as argument the file is called build/<name>.dmg instead.
+# With --no-build first, build/Filsynk.app is used as it is instead of being built and signed again.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-scripts/build-app.sh
+if [ "${1:-}" = "--no-build" ]; then
+    shift
+    [ -d build/Filsynk.app ] || { echo "build/Filsynk.app is missing" >&2; exit 1; }
+else
+    scripts/build-app.sh
+fi
 
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
 NAME="${1:-Filsynk-$VERSION}"
