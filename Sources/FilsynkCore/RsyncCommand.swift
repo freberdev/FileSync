@@ -63,12 +63,14 @@ public enum RsyncCommand {
     }
 
     /// Torrkörning mot en disk: listar med `-i` vad `--delete` skulle ta bort. Skriver ingenting.
+    /// `-8` gör att tecken utanför ASCII i namnen skrivs som de är; rsync i macOS 15 och 26 kodar
+    /// annars en del av dem, bland annat å, ä och ö i den uppdelade form Finder lagrar.
     public static func diskDryRun(
         config: Config, source: String, destination: String,
         format: VolumeFormat, excludeFile: String
     ) -> Invocation {
         let arguments = diskBaseArguments(format: format, excludeFile: excludeFile)
-            + ["-n", "-i", "--delete"]
+            + ["-n", "-i", "-8", "--delete"]
             + [withoutTrailingSlashes(source) + "/", withoutTrailingSlashes(destination) + "/"]
         return Invocation(executable: config.rsyncPath, arguments: arguments)
     }

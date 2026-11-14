@@ -152,8 +152,9 @@ public final class DiskSyncRunner: @unchecked Sendable {
             guard bytes.count > 10, bytes[9] == UInt8(ascii: " ") else { continue }
             let flags = Array(bytes.prefix(9))
             guard flags[0] != UInt8(ascii: "*"), flags.dropFirst(2).allSatisfy({ $0 == UInt8(ascii: "+") }) else { continue }
-            var name = String(decoding: bytes.dropFirst(10), as: UTF8.self)
-            if name.hasSuffix("\r") { name.removeLast() }
+            var raw = Array(bytes.dropFirst(10))
+            if raw.last == UInt8(ascii: "\r") { raw.removeLast() }
+            let name = String(decoding: DeletionList.unescaped(raw), as: UTF8.self)
             var candidates = [name]
             if flags[1] == UInt8(ascii: "L") {
                 // "namn -> mål": prova varje möjlig delning.

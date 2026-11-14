@@ -58,4 +58,25 @@ import Foundation
         #expect(parsed[0].unicodeScalars.map(\.value) == nfc.unicodeScalars.map(\.value))
         #expect(parsed[1].unicodeScalars.map(\.value) == nfd.unicodeScalars.map(\.value))
     }
+
+    @Test func decodesEscapedBytes() {
+        // rsync skriver styrtecken som "\#" och tre oktala siffror.
+        #expect(DeletionList.parse("*deleting rad\\#012brytning.txt\n") == ["rad\nbrytning.txt"])
+        #expect(DeletionList.parse("*deleting vagnretur\\#015\n") == ["vagnretur\r"])
+        // Ett namn kodat byte för byte, som en äldre rsync gör med tecken utanför ASCII.
+        #expect(DeletionList.parse("*deleting a\\#314\\#210.txt\n") == ["a\u{308}.txt"])
+    }
+
+    @Test func escapedBackslashIsNotDecodedTwice() {
+        // Filen heter bokstavligen "back\#303slash.txt"; rsync kodar då bara det omvända snedstrecket.
+        #expect(DeletionList.parse("*deleting back\\#134#303slash.txt\n") == ["back\\#303slash.txt"])
+    }
+
+    @Test func leavesWhatIsNotAnEscapeAlone() {
+        #expect(DeletionList.parse("*deleting a\\#12.txt\n") == ["a\\#12.txt"])
+        #expect(DeletionList.parse("*deleting a\\#128.txt\n") == ["a\\#128.txt"])
+        #expect(DeletionList.parse("*deleting a\\#400.txt\n") == ["a\\#400.txt"])
+        #expect(DeletionList.parse("*deleting a\\b#101.txt\n") == ["a\\b#101.txt"])
+        #expect(DeletionList.parse("*deleting slut\\#\n") == ["slut\\#"])
+    }
 }

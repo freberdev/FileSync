@@ -63,7 +63,7 @@ import Testing
             format: .apfs, excludeFile: "/tmp/ex")
         #expect(inv.executable == "/usr/bin/rsync")
         #expect(inv.arguments == ["-a", "--exclude=/Raderat/", "--exclude=/.filsynk", "--exclude-from=/tmp/ex",
-            "--partial-dir=.filsynk-partial", "-n", "-i", "--delete", "/Users/x/A/", "/Volumes/D/Filsynk/A/"])
+            "--partial-dir=.filsynk-partial", "-n", "-i", "-8", "--delete", "/Users/x/A/", "/Volumes/D/Filsynk/A/"])
     }
 
     @Test func diskDryRunArgumentsOnExFAT() {
@@ -71,7 +71,7 @@ import Testing
             config: config, source: "/Users/x/A/", destination: "/Volumes/D/Filsynk/A/",
             format: .exfat, excludeFile: "/tmp/ex")
         #expect(inv.arguments == ["-rlt", "--modify-window=1", "--exclude=/Raderat/", "--exclude=/.filsynk",
-            "--exclude-from=/tmp/ex", "--partial-dir=.filsynk-partial", "-n", "-i", "--delete",
+            "--exclude-from=/tmp/ex", "--partial-dir=.filsynk-partial", "-n", "-i", "-8", "--delete",
             "/Users/x/A/", "/Volumes/D/Filsynk/A/"])
     }
 

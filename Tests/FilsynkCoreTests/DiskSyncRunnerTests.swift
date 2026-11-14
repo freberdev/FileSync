@@ -309,6 +309,37 @@ struct DiskSyncRunnerTests {
         #expect(s.read(s.raderat + "/" + s.timestamp + "/Varumärke/Räksmörgås.txt") == "borta")
     }
 
+    @Test func decomposedSwedishNameDeletedGoesToRaderat() async throws {
+        let s = try Setup()
+        // Den form Finder och de flesta program lagrar: bokstaven följd av ett kombinerande tecken.
+        let name = "Åäö räksmörgås.txt".decomposedStringWithCanonicalMapping
+        try s.write(s.destination, name, "borta")
+        try s.write(s.source, "a.txt", "a")
+        #expect(await s.sync(s.runner(SystemProcessRunner())) == .success)
+        #expect(!s.exists(s.destination + "/" + name))
+        #expect(s.read(s.raderat + "/" + s.timestamp + "/" + name) == "borta")
+    }
+
+    @Test func nameWithControlCharacterDeletedGoesToRaderat() async throws {
+        let s = try Setup()
+        try s.write(s.destination, "rad\nbrytning.txt", "borta")
+        try s.write(s.destination, "back\\#303slash.txt", "också borta")
+        try s.write(s.source, "a.txt", "a")
+        #expect(await s.sync(s.runner(SystemProcessRunner())) == .success)
+        #expect(s.tree(s.destination).filter { !$0.hasPrefix("Raderat/") } == [".filsynk", "a.txt"])
+        #expect(s.read(s.raderat + "/" + s.timestamp + "/rad\nbrytning.txt") == "borta")
+        #expect(s.read(s.raderat + "/" + s.timestamp + "/back\\#303slash.txt") == "också borta")
+    }
+
+    @Test func folderReplacingFileWithControlCharacterInName() async throws {
+        let s = try Setup()
+        try s.write(s.destination, "ny\nrad", "var en fil")
+        try s.write(s.source, "ny\nrad/inne.txt", "nu en mapp")
+        #expect(await s.sync(s.runner(SystemProcessRunner())) == .success)
+        #expect(s.read(s.destination + "/ny\nrad/inne.txt") == "nu en mapp")
+        #expect(s.read(s.raderat + "/" + s.timestamp + "/ny\nrad") == "var en fil")
+    }
+
     @Test func fileReplacedByFolderEndsUpRight() async throws {
         let s = try Setup()
         try s.write(s.destination, "x", "var en fil")
