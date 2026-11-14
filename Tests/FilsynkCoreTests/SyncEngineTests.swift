@@ -183,9 +183,11 @@ private final class Recorder: @unchecked Sendable {
     }
 }
 
-/// Polls `condition` until it holds or `timeout` seconds have passed.
+/// Polls `condition` until it holds or `timeout` seconds have passed. It returns as soon as the
+/// condition holds, so the generous limit only costs time when something is wrong; a short one
+/// fails on a slow or busy machine.
 private func eventually(
-    timeout: TimeInterval = 2, _ condition: @Sendable () async -> Bool
+    timeout: TimeInterval = 20, _ condition: @Sendable () async -> Bool
 ) async -> Bool {
     let deadline = Date().addingTimeInterval(timeout)
     while Date() < deadline {
@@ -396,12 +398,12 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
             await h.engine.syncNow()
             try? await Task.sleep(for: .milliseconds(20))
         }
-        #expect(await eventually(timeout: 5) { await runner.callCount(Self.pathA) >= 2 })
+        #expect(await eventually { await runner.callCount(Self.pathA) >= 2 })
         // A reload with new sync inputs cancels the running syncs; the restarted ones must wait until they have ended.
         var changed = Self.config([Self.folderA, Self.folderB])
         changed.exclude = ["*.tmp"]
         await h.engine.reload(changed)
-        #expect(await eventually(timeout: 5) { await runner.callCount(Self.pathA) >= 3 })
+        #expect(await eventually { await runner.callCount(Self.pathA) >= 3 })
         await settle()
         #expect(await runner.maxConcurrent[FakeRunner.key(Self.pathA)] == 1)
         #expect(await runner.maxConcurrent[FakeRunner.key(Self.pathB)] == 1)
@@ -614,8 +616,8 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
         changed.quietSeconds = 30  // not a sync input
         await h.engine.reload(changed)
         // The running sync is not cancelled; the restart's request runs after it, never beside it.
-        #expect(await eventually(timeout: 5) { await runner.callCount(Self.pathA) == 2 })
-        #expect(await eventually(timeout: 5) { h.recorder.state(of: Self.pathA) == .synced })
+        #expect(await eventually { await runner.callCount(Self.pathA) == 2 })
+        #expect(await eventually { h.recorder.state(of: Self.pathA) == .synced })
         await settle()
         #expect(await runner.cancelled.isEmpty)
         #expect(await runner.maxConcurrent[FakeRunner.key(Self.pathA)] == 1)
@@ -633,9 +635,9 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
         var changed = Self.config([Self.folderA])
         changed.exclude = ["*.tmp"]
         await h.engine.reload(changed)
-        #expect(await eventually(timeout: 5) { await runner.cancelled == [Self.pathA] })
-        #expect(await eventually(timeout: 5) { await runner.callCount(Self.pathA) == 2 })
-        #expect(await eventually(timeout: 5) { h.recorder.state(of: Self.pathA) == .synced })
+        #expect(await eventually { await runner.cancelled == [Self.pathA] })
+        #expect(await eventually { await runner.callCount(Self.pathA) == 2 })
+        #expect(await eventually { h.recorder.state(of: Self.pathA) == .synced })
         await settle()
         #expect(await runner.maxConcurrent[FakeRunner.key(Self.pathA)] == 1)
         #expect(await runner.callCount(Self.pathA) == 2)
@@ -746,7 +748,7 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
             await h.engine.syncNow()
             try? await Task.sleep(for: .milliseconds(20))
         }
-        #expect(await eventually(timeout: 5) {
+        #expect(await eventually {
             let server = await runner.callCount(Self.pathA, "server")
             let disk = await runner.callCount(Self.pathA, Self.diskA.id)
             return server >= 2 && disk >= 2
@@ -755,7 +757,7 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
         var changed = Self.config([Self.bothA])
         changed.exclude = ["*.tmp"]
         await h.engine.reload(changed)
-        #expect(await eventually(timeout: 5) {
+        #expect(await eventually {
             let server = await runner.callCount(Self.pathA, "server")
             let disk = await runner.callCount(Self.pathA, Self.diskA.id)
             return server >= 3 && disk >= 3
@@ -1130,10 +1132,10 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
         #expect(await eventually { await runner.currentTotal == 2 })
 
         await h.engine.reload(Self.config([Self.bothA], server: "other@server"))
-        #expect(await eventually(timeout: 5) { await runner.cancelledKeys == [FakeRunner.key(Self.pathA)] })
-        #expect(await eventually(timeout: 5) { h.recorder.state(of: Self.pathA, Self.diskA.id) == .synced })
+        #expect(await eventually { await runner.cancelledKeys == [FakeRunner.key(Self.pathA)] })
+        #expect(await eventually { h.recorder.state(of: Self.pathA, Self.diskA.id) == .synced })
         #expect(await h.engine.schedule(of: Self.pathA, destinationID: Self.diskA.id)?.lastSuccess != nil)
-        #expect(await eventually(timeout: 5) { h.recorder.state(of: Self.pathA) == .synced })
+        #expect(await eventually { h.recorder.state(of: Self.pathA) == .synced })
         await settle()
         #expect(await runner.cancelledKeys == [FakeRunner.key(Self.pathA)])
         #expect(await runner.maxConcurrent[FakeRunner.key(Self.pathA, Self.diskA.id)] == 1)
@@ -1163,7 +1165,7 @@ private func settle(_ seconds: TimeInterval = 0.4) async {
         #expect(await eventually { h.recorder.state(of: Self.pathA, Self.diskA.id) == .notConnected })
         #expect(await runner.callCount(Self.pathA, Self.diskA.id) == 1)
 
-        #expect(await eventually(timeout: 5) { await runner.callCount(Self.pathA, Self.diskA.id) == 2 })
+        #expect(await eventually { await runner.callCount(Self.pathA, Self.diskA.id) == 2 })
         #expect(await eventually { h.recorder.state(of: Self.pathA, Self.diskA.id) == .synced })
         await h.engine.stop()
     }
