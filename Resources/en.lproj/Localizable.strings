@@ -4,15 +4,15 @@
 "FileSync startar" = "FileSync is starting";
 "Konfigurationsfilen kan inte läsas: %@" = "The configuration file cannot be read: %@";
 "Konfigurationsfilen kan inte läsas" = "The configuration file cannot be read";
-"Kunde inte lägga till som inloggningsobjekt: %@" = "Could not add as a login item: %@";
+"Kunde inte lägga till som inloggningsobjekt: %@" = "Could not add the app as a login item: %@";
 "Kunde inte spara konfigurationen: %@" = "Could not save the configuration: %@";
 "Kunde inte spara konfigurationen" = "Could not save the configuration";
 "✓ Ansluten, rsync %@" = "✓ Connected, rsync %@";
-"Servern accepterar inte nyckeln ännu. Kör kommandot nedan i Terminal och testa igen." = "The server does not accept the key yet. Run the command below in Terminal and test again.";
+"Servern accepterar inte nyckeln ännu. Kör kommandot nedan i Terminal och testa igen." = "The server does not accept the key yet. Run the command below in Terminal and try again.";
 "Servern nås inte." = "The server cannot be reached.";
 "Servern behöver rsync 3 eller senare. %@" = "The server needs rsync 3 or later. %@";
 "Logg öppnad" = "Log opened";
-"Kunde inte spara mappens volym: %@" = "Could not save the volume of the folder: %@";
+"Kunde inte spara mappens volym: %@" = "Could not save the folder's volume: %@";
 
 /* FilsynkApp.swift */
 "FileSync — Inställningar" = "FileSync — Settings";
@@ -31,13 +31,13 @@
 "Avisering misslyckades (%@): %@" = "Notification failed (%@): %@";
 
 /* SettingsView.swift */
-"Konfigurationsfilen kan inte läsas. Rätta eller ta bort filen och starta om FileSync." = "The configuration file cannot be read. Correct or remove the file and restart FileSync.";
+"Konfigurationsfilen kan inte läsas. Rätta eller ta bort filen och starta om FileSync." = "The configuration file cannot be read. Fix or remove the file and restart FileSync.";
 "Server" = "Server";
 "Adress" = "Address";
 "användare@server" = "user@server";
 "Nyckel" = "Key";
 "Testa anslutning" = "Test connection";
-"Skriv serverns adress och tryck Testa anslutning. Första gången skapas en egen nyckel, och du får ett kommando att köra i Terminal för att lägga in den på servern." = "Type the server’s address and press Test connection. The first time, a key of its own is created, and you get a command to run in Terminal to add it on the server.";
+"Skriv serverns adress och tryck Testa anslutning. Första gången skapas en egen nyckel, och du får ett kommando att köra i Terminal för att lägga in den på servern." = "Enter the server's address and click Test connection. The first time, FileSync creates its own key and gives you a command to run in Terminal to add it to the server.";
 "Kopiera" = "Copy";
 "Mappar" = "Folders";
 "På Macen" = "On the Mac";
@@ -50,7 +50,7 @@
 "Mapp på Macen" = "Folder on the Mac";
 "Välj mapp…" = "Choose folder…";
 "Extern disk" = "External disk";
-"Sökväg på servern" = "Path on the server";
+"Sökväg på servern" = "Server path";
 "Välj mapp på disken…" = "Choose folder on the disk…";
 "Lägg till" = "Add";
 "Undantag (gäller alla mappar)" = "Exclusions (apply to all folders)";
@@ -59,25 +59,25 @@
 "Starta vid inloggning" = "Start at login";
 "Kunde inte ändra inloggningsobjektet" = "Could not change the login item";
 "Språk" = "Language";
-"Följ systemet" = "Same as the system";
+"Följ systemet" = "System language";
 "Språket byts nästa gång FileSync startar." = "The language changes the next time FileSync starts.";
 
 /* Config.swift */
 "Okänt slags mål: %@" = "Unknown kind of destination: %@";
 "Den lokala sökvägen \"%@\" måste vara absolut (börja med /)." = "The local path \"%@\" must be absolute (start with /).";
-"De lokala mapparna \"%@\" och \"%@\" ligger inuti varandra." = "The local folders \"%@\" and \"%@\" are inside each other.";
-"Mapparna på servern \"%@\" och \"%@\" ligger inuti varandra." = "The folders on the server \"%@\" and \"%@\" are inside each other.";
-"Sökvägen på servern \"%@\" innehåller otillåtna tecken. Använd bokstäver, siffror och . _ - / + @ , = %%." = "The path on the server \"%@\" contains characters that are not allowed. Use letters, digits and . _ - / + @ , = %%.";
+"De lokala mapparna \"%@\" och \"%@\" ligger inuti varandra." = "The local folders \"%@\" and \"%@\" overlap: one is inside the other.";
+"Mapparna på servern \"%@\" och \"%@\" ligger inuti varandra." = "The server folders \"%@\" and \"%@\" overlap: one is inside the other.";
+"Sökvägen på servern \"%@\" innehåller otillåtna tecken. Använd bokstäver, siffror och . _ - / + @ , = %%." = "The server path \"%@\" contains characters that are not allowed. Use letters, digits and . _ - / + @ , = %%.";
 "Serveradressen är ogiltig: %@" = "The server address is not valid: %@";
-"Sökvägen på servern \"%@\" är för bred. Välj en egen mapp." = "The path on the server \"%@\" is too broad. Choose a folder of its own.";
-"Sökvägen på servern \"%@\" går inte att använda. Välj en egen mapp utan . och .. och utanför ~/.ssh." = "The path on the server \"%@\" cannot be used. Choose a folder of its own, without . and .. and outside ~/.ssh.";
-"Undantaget \"%@\" går inte att använda. Det får inte vara tomt eller börja med !, + , - , : eller . följt av mellanslag." = "The exclusion \"%@\" cannot be used. It must not be empty or start with !, + , - , : or . followed by a space.";
-"Mappen \"%@\" innehåller FileSyncs egna filer (logg och inställningar) och skulle synkas om och om igen. Välj en undermapp." = "The folder \"%@\" contains FileSync’s own files (log and settings) and would be synced over and over. Choose a subfolder.";
+"Sökvägen på servern \"%@\" är för bred. Välj en egen mapp." = "The server path \"%@\" is too broad. Choose a separate folder.";
+"Sökvägen på servern \"%@\" går inte att använda. Välj en egen mapp utan . och .. och utanför ~/.ssh." = "The server path \"%@\" cannot be used. Choose a separate folder, without . and .. and outside ~/.ssh.";
+"Undantaget \"%@\" går inte att använda. Det får inte vara tomt eller börja med !, + , - , : eller . följt av mellanslag." = "The exclusion \"%@\" cannot be used. It must not be empty, and must not start with !, + , - , : or . followed by a space.";
+"Mappen \"%@\" innehåller FileSyncs egna filer (logg och inställningar) och skulle synkas om och om igen. Välj en undermapp." = "The folder \"%@\" contains FileSync's own files (log and settings) and would be synced over and over. Choose a subfolder.";
 "Mappen %@ har inget mål." = "The folder %@ has no destination.";
 "Mappen %@ har fler än ett mål på servern." = "The folder %@ has more than one destination on the server.";
 "Sökvägen på disken är ogiltig: %@" = "The path on the disk is not valid: %@";
 "Disken för %@ saknar id." = "The disk for %@ has no ID.";
-"Mapparna på disken \"%@\" och \"%@\" ligger inuti varandra." = "The folders on the disk \"%@\" and \"%@\" are inside each other.";
+"Mapparna på disken \"%@\" och \"%@\" ligger inuti varandra." = "The folders on the disk \"%@\" and \"%@\" overlap: one is inside the other.";
 "Nyckelfilen \"%@\" innehåller otillåtna tecken (mellanslag, citattecken, $, ` eller \\)." = "The key file \"%@\" contains characters that are not allowed (spaces, quotation marks, $, ` or \\).";
 
 /* ConnectionSetup.swift */
@@ -96,12 +96,12 @@
 "Diskens format stöds inte." = "The disk format is not supported.";
 "Systemdisken kan inte vara mål." = "The system disk cannot be a destination.";
 "Mappen %@ saknas eller går inte att läsa" = "The folder %@ is missing or cannot be read";
-"Mappen på disken känns inte igen. Lägg till målet igen." = "The folder on the disk is not recognised. Add the destination again.";
+"Mappen på disken känns inte igen. Lägg till målet igen." = "The folder on the disk is not recognized. Add the destination again.";
 "%@: kunde inte skriva undantagsfilen: %@" = "%@: could not write the exclusions file: %@";
 "Kunde inte förbereda synken" = "Could not prepare the sync";
 "%@: kunde inte starta rsync: %@" = "%@: could not start rsync: %@";
 "Kunde inte starta rsync: %@" = "Could not start rsync: %@";
-"Synken avbröts" = "The sync was cancelled";
+"Synken avbröts" = "The sync was canceled";
 "Kunde inte flytta undan raderade filer: %@" = "Could not move deleted files aside: %@";
 "Mappen Raderat på disken är inte en vanlig mapp." = "The folder Raderat on the disk is not an ordinary folder.";
 "Disken är full" = "The disk is full";
@@ -112,8 +112,8 @@
 "misslyckades: %@" = "failed: %@";
 
 /* FolderInspector.swift */
-"Mappen innehåller %@ filer. Över 100 000 kan synken bli märkbar. Lägg till undantag eller välj en undermapp." = "The folder contains %@ files. Above 100,000 the sync may become noticeable. Add exclusions or choose a subfolder.";
-"%@ filer (%@) finns bara i iCloud och laddas ner vid första synken." = "%@ files (%@) are only in iCloud and will be downloaded at the first sync.";
+"Mappen innehåller %@ filer. Över 100 000 kan synken bli märkbar. Lägg till undantag eller välj en undermapp." = "The folder contains %@ files. With more than 100,000 files, syncing may become noticeable. Add exclusions or choose a subfolder.";
+"%@ filer (%@) finns bara i iCloud och laddas ner vid första synken." = "%@ files (%@) are only in iCloud and will be downloaded during the first sync.";
 "Mappen \"Raderat\" i toppnivån säkerhetskopieras inte. Namnet är reserverat." = "The folder \"Raderat\" at the top level is not backed up. The name is reserved.";
 
 /* NoticePolicy.swift */
@@ -121,7 +121,7 @@
 "FileSync: synken misslyckas" = "FileSync: sync is failing";
 "FileSync: osynkade ändringar" = "FileSync: unsynced changes";
 "Servern accepterar inte nyckeln. Öppna Inställningar och testa anslutningen." = "The server does not accept the key. Open Settings and test the connection.";
-"%@ har inte kunnat säkerhetskopieras på över ett dygn." = "%@ has not been backed up for more than a day.";
+"%@ har inte kunnat säkerhetskopieras på över ett dygn." = "%@ could not be backed up for more than a day.";
 
 /* RaderatMover.swift */
 "Ogiltig tidsstämpel: %@" = "Invalid timestamp: %@";
@@ -143,14 +143,14 @@
 "Mappen på disken finns inte." = "The folder on the disk does not exist.";
 "Mappen på Macen finns inte." = "The folder on the Mac does not exist.";
 "Mappen på Macen har en radbrytning i namnet och kan inte användas." = "The folder on the Mac has a line break in its name and cannot be used.";
-"Mappen på disken och en bevakad mapp ligger inuti varandra." = "The folder on the disk and a watched folder are inside each other.";
+"Mappen på disken och en bevakad mapp ligger inuti varandra." = "The folder on the disk and a watched folder overlap: one is inside the other.";
 "Mappen har redan det här målet." = "The folder already has this destination.";
 "Kunde inte köra kommandot: %@" = "Could not run the command: %@";
-"Sökvägen på servern \"%@\" innehåller otillåtna tecken." = "The path on the server \"%@\" contains characters that are not allowed.";
+"Sökvägen på servern \"%@\" innehåller otillåtna tecken." = "The server path \"%@\" contains characters that are not allowed.";
 "Kunde inte skapa mappen på servern: %@" = "Could not create the folder on the server: %@";
 "okänt fel" = "unknown error";
 "Oväntat svar från servern: %@" = "Unexpected reply from the server: %@";
-"Välj en egen mapp på servern, inte hemkatalogen eller en mapp ovanför den." = "Choose a folder of its own on the server, not the home folder or a folder above it.";
+"Välj en egen mapp på servern, inte hemkatalogen eller en mapp ovanför den." = "Choose a separate folder on the server, not the home folder or a folder above it.";
 "Kunde inte skapa nyckeln: %@" = "Could not create the key: %@";
 
 /* StatusPresentation.swift */
