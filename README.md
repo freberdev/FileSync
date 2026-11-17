@@ -1,58 +1,60 @@
 # FileSync
 
-## Vad det är
+## What it is
 
-FileSync är en liten menyradsapp för macOS (minst macOS 15) som säkerhetskopierar utvalda mappar på Macen till din egen Linux-server med rsync över SSH, och till en eller flera externa diskar. Den bevakar mapparna, skickar bara det som ändrats och flyttar det som raderas eller skrivs över undan i stället för att ta bort det. Servern och disken är backuper, inte arbetsytor: ändringar går bara från Macen till målet, aldrig tillbaka.
+FileSync is a small menu-bar app for macOS (macOS 15 or later) that backs up chosen folders on your Mac to your own Linux server with rsync over SSH, and to one or more external disks. It watches the folders, sends only what has changed, and moves what is deleted or overwritten aside instead of removing it. The server and the disk hold backups, not working copies: changes go only from the Mac to the destination, never back.
 
-## Bygga och installera
+The app is in Swedish and English. It follows the Mac's language and uses English for every other language. Settings has a Language picker with the options Same as the system, Svenska and English. A change takes effect the next time FileSync starts.
+
+## Build and install
 
 ```bash
 scripts/build-app.sh --install
 open /Applications/FileSync.app
 ```
 
-Skriptet bygger `build/FileSync.app`, signerar den och kopierar den till `/Applications`. Utan `--install` byggs bara `build/FileSync.app`. En äldre `Filsynk.app` i Program är samma app under sitt gamla namn; `--install` tar bort den, och installerar du från en diskavbild tar du bort den för hand. Ett lokalt bygge är inte notariserat och går inte att dela med andra som det är; det gör releasen på GitHub, se nedan.
+The script builds `build/FileSync.app`, signs it and copies it to `/Applications`. Without `--install` it only builds `build/FileSync.app`. An older `Filsynk.app` in Applications is the same app under its old name; `--install` removes it, and if you install from a disk image you remove it by hand. A local build is not notarized and cannot be shared with others as it is; the release on GitHub does that, see below.
 
-Appikonen ligger i `Resources/AppIcon.icns` och ritas av `swift scripts/make-icon.swift`. Kör skriptet igen om du ändrar ritningen.
+The app icon is in `Resources/AppIcon.icns` and is drawn by `swift scripts/make-icon.swift`. Run the script again if you change the drawing.
 
-"Starta vid inloggning" slås på av sig själv vid första start, men bara om appen körs från `/Applications`. Notisfrågan från macOS kommer första gången en notis ska visas.
+"Start at login" turns itself on at the first launch, but only if the app runs from `/Applications`. The notification prompt from macOS appears the first time a notification is about to be shown.
 
-### Diskavbild
+### Disk image
 
 ```bash
 scripts/build-dmg.sh
 ```
 
-Skriptet bygger appen och lägger den i `build/FileSync-<version>.dmg` tillsammans med en genväg till Program. Öppna filen och dra FileSync till Program.
+The script builds the app and puts it in `build/FileSync-<version>.dmg` together with a shortcut to Applications. Open the file and drag FileSync to Applications.
 
-### Release på GitHub
+### Release on GitHub
 
-Varje push till `main`, alltså också varje merge dit, kör testerna på GitHub, bygger diskavbilden och lägger upp den som en release med namnet `v<version>-<körningens nummer>`. Ändras bara dokumentation (`*.md`, `docs/` och `LICENSE`) körs ingenting. Flödet ligger i `.github/workflows/release.yml`.
+Every push to `main`, including every merge into it, runs the tests on GitHub, builds the disk image and publishes it as a release named `v<version>-<run number>`. If only documentation changes (`*.md`, `docs/` and `LICENSE`), nothing runs. The workflow is in `.github/workflows/release.yml`.
 
-Flödet går också att starta för hand, till exempel när hemligheterna just har lagts in: under Actions → Release → Run workflow, eller med
+You can also start the workflow by hand, for example when the secrets have just been added: under Actions → Release → Run workflow, or with
 
 ```bash
 gh workflow run release.yml
 ```
 
-Flödet har två jobb:
+The workflow has two jobs:
 
-1. **test** kör `swift test`. Det har inte tillgång till några hemligheter.
-2. **release** bygger appen, signerar den, bygger diskavbilden, låter Apple notarisera den och skapar releasen. Det körs i miljön `release`.
+1. **test** runs `swift test`. It has no access to any secrets.
+2. **release** builds the app, signs it, builds the disk image, has Apple notarize it and creates the release. It runs in the `release` environment.
 
-Versionen i namnet kommer från `CFBundleShortVersionString` i `Resources/Info.plist`. Diskavbilden är byggd för Apple Silicon.
+The version in the name comes from `CFBundleShortVersionString` in `Resources/Info.plist`. The disk image is built for Apple Silicon.
 
-#### Signerad och notariserad release
+#### Signed and notarized release
 
-Finns certifikatet inlagt signeras appen och diskavbilden med det, och finns nyckeln för notarisering godkänns diskavbilden av Apple. Då öppnas appen utan varning på vilken Mac som helst, och tillstånden ligger kvar mellan versionerna. Saknas certifikatet signeras appen utan, se Bra att veta nedan.
+If the certificate has been added, the app and the disk image are signed with it, and if the key for notarization has been added, Apple approves the disk image. The app then opens without a warning on any Mac, and the permissions stay in place between versions. If the certificate is missing, the app is signed without one, see Good to know below.
 
-Certifikatet och nyckeln ligger som hemligheter i miljön `release` på GitHub, aldrig i repot. Den som klonar eller forkar repot kommer inte åt dem. Miljön tar bara emot körningar från `main`. Certifikatet läses in först när appen redan är byggd och tas bort igen så fort det har signerat.
+The certificate and the key are stored as secrets in the `release` environment on GitHub, never in the repo. Anyone who clones or forks the repo cannot get at them. The environment only accepts runs from `main`. The certificate is loaded only after the app has been built, and is removed again as soon as it has signed.
 
-Det här behövs, en gång:
+You need this once:
 
-1. **Ett Developer ID Application-certifikat.** Enklast i Xcode: Settings → Accounts → välj teamet → Manage Certificates → **+** → Developer ID Application. Bara kontoinnehavaren kan skapa det. Ett Apple Development-certifikat duger inte här.
-2. **Exportera det** ur Nyckelhanteraren: högerklicka på certifikatet under Mina certifikat → Exportera → filformat `.p12`, och välj ett lösenord för filen.
-3. **Lägg in det** som hemligheter. Värdena läses från filen och från en dold fråga, så de hamnar inte i skalets historik:
+1. **A Developer ID Application certificate.** Easiest in Xcode: Settings → Accounts → select the team → Manage Certificates → **+** → Developer ID Application. Only the account holder can create it. An Apple Development certificate is not enough here.
+2. **Export it** from Keychain Access: right-click the certificate under My Certificates → Export → file format `.p12`, and choose a password for the file.
+3. **Add it** as secrets. The values are read from the file and from a hidden prompt, so they do not end up in the shell history:
 
    ```bash
    base64 -i DeveloperID.p12 | gh secret set SIGN_CERT_P12_BASE64 --env release
@@ -62,11 +64,11 @@ Det här behövs, en gång:
    gh secret set SIGN_CERT_PASSWORD --env release
    ```
 
-4. **En API-nyckel för notariseringen.** App Store Connect → Användare och åtkomst → Integreringar → App Store Connect API → skapa en teamnyckel med rollen Developer. Ladda ner filen `AuthKey_<nyckel-id>.p8`; det går bara en gång. Nyckelns id och Issuer ID står på samma sida.
-5. **Lägg in den:**
+4. **An API key for notarization.** App Store Connect → Users and Access → Integrations → App Store Connect API → create a team key with the Developer role. Download the file `AuthKey_<key-id>.p8`; you can only do this once. The key's ID and the Issuer ID are on the same page.
+5. **Add it:**
 
    ```bash
-   base64 -i AuthKey_<nyckel-id>.p8 | gh secret set NOTARY_KEY_P8_BASE64 --env release
+   base64 -i AuthKey_<key-id>.p8 | gh secret set NOTARY_KEY_P8_BASE64 --env release
    ```
 
    ```bash
@@ -77,444 +79,444 @@ Det här behövs, en gång:
    gh secret set NOTARY_ISSUER_ID --env release
    ```
 
-6. **Ta bort filerna** `.p12` och `.p8` från disken, eller lägg dem i lösenordshanteraren.
+6. **Delete the files** `.p12` and `.p8` from the disk, or put them in the password manager.
 
-Kontrollera en nedladdad diskavbild:
+Check a downloaded disk image:
 
 ```bash
-spctl --assess --type open --context context:primary-signature --verbose=2 FileSync-<version>-<nummer>.dmg
+spctl --assess --type open --context context:primary-signature --verbose=2 FileSync-<version>-<number>.dmg
 ```
 
-Utskriften ska säga `accepted` och `source=Notarized Developer ID`.
+The output should say `accepted` and `source=Notarized Developer ID`.
 
-#### Godkännande före release
+#### Approval before release
 
-Miljön `release` kan kräva att du godkänner varje release med ett klick innan jobbet får tillgång till hemligheterna: Settings → Environments → release → Required reviewers. GitHub erbjuder det för publika repon, och för privata bara i de större abonnemangen.
+The `release` environment can require you to approve each release with a click before the job gets access to the secrets: Settings → Environments → release → Required reviewers. GitHub offers this for public repos, and for private ones only in the larger plans.
 
-#### Håll hemligheterna säkra
+#### Keep the secrets safe
 
-- **Läs varje ändring av `.github/` och `scripts/` innan den slås ihop till `main`.** Det som körs i release-jobbet körs på samma maskin som certifikatet.
-- **Ge ingen annan skrivrätt till repot.** Den som får pusha kan ändra flödet.
-- **Lägg aldrig till en utlösare för pull requests** i flödet med hemligheterna.
-- **Läcker certifikatet** drar du in det på developer.apple.com och skapar ett nytt.
+- **Read every change to `.github/` and `scripts/` before it is merged into `main`.** What runs in the release job runs on the same machine as the certificate.
+- **Do not give anyone else write access to the repo.** Anyone who can push can change the workflow.
+- **Never add a pull request trigger** to the workflow that has the secrets.
+- **If the certificate leaks,** revoke it on developer.apple.com and create a new one.
 
-#### Bra att veta om en release utan certifikat
+#### Good to know about a release without a certificate
 
-- **Den är signerad utan certifikat och inte notariserad.** Första gången vägrar macOS öppna appen. Gå till Systeminställningar → Integritet och säkerhet och välj **Öppna ändå**.
-- **Tillstånden frågas om för varje ny version**, eftersom varje bygge utan certifikat räknas som en ny app.
+- **It is signed without a certificate and not notarized.** The first time, macOS refuses to open the app. Go to System Settings → Privacy & Security and choose **Open Anyway**.
+- **The permissions are asked for again for every new version,** because every build without a certificate counts as a new app.
 
-## Signering
+## Signing
 
-Byggskriptet signerar alltid appen. Frågan är bara om det sker med eller utan certifikat. Appen fungerar lika bra i båda fallen.
+The build script always signs the app. The only question is whether it does so with or without a certificate. The app works equally well in both cases.
 
-### Varför signera med certifikat
+### Why sign with a certificate
 
-- **Utan certifikat** ser macOS varje nytt bygge som en ny app. Tillstånden för notiser, start vid inloggning, det lokala nätverket och skyddade mappar som Dokument kan då behöva ges om efter varje ombyggnad.
-- **Med certifikat** knyts tillstånden till teamet och appens id (`com.freberdev.filsynk`) i stället för till det enskilda bygget, och ligger kvar mellan byggen. Under Inloggningsobjekt står appen med utvecklarens namn.
+- **Without a certificate** macOS sees every new build as a new app. The permissions for notifications, start at login, the local network and protected folders such as Documents may then have to be granted again after every rebuild.
+- **With a certificate** the permissions are tied to the team and the app's ID (`com.freberdev.filsynk`) instead of to the individual build, and stay in place between builds. Under Login Items the app appears with the developer's name.
 
-Skriptet notariserar inte appen. Den går alltså inte att dela med andra som den är, med eller utan certifikat.
+The script does not notarize the app. So it cannot be shared with others as it is, with or without a certificate.
 
-### Vilket certifikat
+### Which certificate
 
-- **Apple Development** räcker för den egna Macen. Xcode skapar det under Settings > Accounts > Manage Certificates > `+` > Apple Development. Det gäller i ett år.
-- **Developer ID Application** krävs för att köra appen på en annan dator utan varningar, tillsammans med notarisering. Det förutsätter ett betalt utvecklarkonto, och bara kontoinnehavaren kan skapa det.
+- **Apple Development** is enough for your own Mac. Xcode creates it under Settings > Accounts > Manage Certificates > `+` > Apple Development. It is valid for one year.
+- **Developer ID Application** is required to run the app on another computer without warnings, together with notarization. It requires a paid developer account, and only the account holder can create it.
 
-### Hitta certifikatets namn och hash
+### Find the certificate's name and hash
 
 ```bash
 security find-identity -v -p codesigning
 ```
 
-Utskriften har en rad per giltigt certifikat:
+The output has one line per valid certificate:
 
 ```
-  1) 0123456789ABCDEF0123456789ABCDEF01234567 "Apple Development: Ditt Namn (ABCDE12345)"
+  1) 0123456789ABCDEF0123456789ABCDEF01234567 "Apple Development: Your Name (ABCDE12345)"
      1 valid identities found
 ```
 
-De 40 tecknen först är hashen, och texten inom citattecken är namnet. Båda går att använda.
+The 40 characters first are the hash, and the text in quotation marks is the name. You can use either.
 
-Finns det flera certifikat, för olika team, väljer du det team appen ska höra till. Vilket team ett certifikat tillhör syns i fälten `O` (organisation) och `OU` (team-id):
+If there are several certificates, for different teams, choose the team the app should belong to. Which team a certificate belongs to is shown in the fields `O` (organization) and `OU` (team ID):
 
 ```bash
-security find-certificate -c "Apple Development: Ditt Namn (ABCDE12345)" -p | openssl x509 -noout -subject
+security find-certificate -c "Apple Development: Your Name (ABCDE12345)" -p | openssl x509 -noout -subject
 ```
 
-### Ange certifikatet
+### Specify the certificate
 
-Det finns två sätt. Miljövariabeln går före filen. Någon `.env`-fil läses inte.
+There are two ways. The environment variable takes precedence over the file. No `.env` file is read.
 
-**1. Filen `.signing-identity`** i projektmappen, alltså samma mapp som `Package.swift`. Första raden ska vara certifikatets namn eller hash, och inget annat. Filen ignoreras av git och checkas aldrig in.
+**1. The file `.signing-identity`** in the project folder, that is, the same folder as `Package.swift`. The first line must be the certificate's name or hash, and nothing else. The file is ignored by git and never checked in.
 
 ```bash
 echo "0123456789ABCDEF0123456789ABCDEF01234567" > .signing-identity
 ```
 
-Därefter signerar `scripts/build-app.sh` med certifikatet varje gång, utan fler åtgärder.
+After that, `scripts/build-app.sh` signs with the certificate every time, with no further steps.
 
-**2. Miljövariabeln `FILSYNK_SIGN_IDENTITY`**, för ett enstaka bygge:
+**2. The environment variable `FILSYNK_SIGN_IDENTITY`**, for a single build:
 
 ```bash
-FILSYNK_SIGN_IDENTITY="Apple Development: Ditt Namn (ABCDE12345)" scripts/build-app.sh --install
+FILSYNK_SIGN_IDENTITY="Apple Development: Your Name (ABCDE12345)" scripts/build-app.sh --install
 ```
 
-Ska den gälla alltid lägger du raden `export FILSYNK_SIGN_IDENTITY="…"` i `~/.zshrc`.
+If it should always apply, add the line `export FILSYNK_SIGN_IDENTITY="…"` to `~/.zshrc`.
 
-För att gå tillbaka till signering utan certifikat tar du bort `.signing-identity`, eller sätter `FILSYNK_SIGN_IDENTITY=-` för ett enstaka bygge.
+To go back to signing without a certificate, delete `.signing-identity`, or set `FILSYNK_SIGN_IDENTITY=-` for a single build.
 
-**Namn eller hash?** Hashen pekar alltid ut exakt ett certifikat, men den byts när certifikatet förnyas. Namnet brukar överleva en förnyelse, men det fungerar inte om två certifikat har samma namn.
+**Name or hash?** The hash always points to exactly one certificate, but it changes when the certificate is renewed. The name usually survives a renewal, but it does not work if two certificates have the same name.
 
-### Kontrollera signaturen
+### Verify the signature
 
-Byggskriptet avslutar med `(signed with a certificate)` eller `(signed ad hoc)`. Den installerade appen kontrolleras så här:
+The build script ends with `(signed with a certificate)` or `(signed ad hoc)`. Check the installed app like this:
 
 ```bash
 codesign -dv --verbose=2 /Applications/FileSync.app
 ```
 
-- Med certifikat: `Authority=Apple Development: …` och `TeamIdentifier=` följt av team-id.
-- Utan certifikat: `Signature=adhoc` och `TeamIdentifier=not set`.
+- With a certificate: `Authority=Apple Development: …` and `TeamIdentifier=` followed by the team ID.
+- Without a certificate: `Signature=adhoc` and `TeamIdentifier=not set`.
 
 ```bash
 codesign --verify --strict /Applications/FileSync.app
 ```
 
-Ingen utskrift betyder att signaturen är giltig.
+No output means the signature is valid.
 
-### Efter första bygget med certifikat
+### After the first build with a certificate
 
-Första gången appen signeras med ett certifikat räknar macOS den som en ny app. Detsamma gäller om du byter certifikat, team eller appens id. Gör då detta en gång:
+The first time the app is signed with a certificate, macOS treats it as a new app. The same applies if you change the certificate, the team or the app's ID. Do this once:
 
-1. Slå på "Starta vid inloggning" i FileSyncs inställningar. Det slås bara på av sig självt vid allra första start.
-2. Titta under Systeminställningar > Allmänt > Inloggningsobjekt och ta bort en eventuell äldre FileSync- eller Filsynk-post.
-3. Godkänn notiser när macOS frågar, vilket sker första gången en notis ska visas.
+1. Turn on "Start at login" in FileSync's settings. It only turns itself on at the very first launch.
+2. Look under System Settings > General > Login Items and remove any older FileSync or Filsynk entry.
+3. Allow notifications when macOS asks, which happens the first time a notification is about to be shown.
 
-Därefter ligger tillstånden kvar mellan byggen.
+After that, the permissions stay in place between builds.
 
-### Felsökning
+### Troubleshooting
 
-| Meddelande | Orsak och åtgärd |
+| Message | Cause and fix |
 |---|---|
-| `no identity found` | Namnet eller hashen stämmer inte, eller certifikatet har gått ut. Kör `security find-identity -v -p codesigning` och rätta `.signing-identity`. Har certifikatet gått ut förnyar du det i Xcode. Bygget avbryts, och ingen osignerad app installeras i stället. |
-| `ambiguous (matches … and …)` | Flera certifikat matchar namnet. Ange hashen i stället. |
-| macOS frågar om `codesign` får använda nyckeln | Välj Tillåt alltid. |
-| `errSecInternalComponent` | Nyckelringen är låst, till exempel vid inloggning över SSH. Lås upp den med `security unlock-keychain`. |
+| `no identity found` | The name or the hash is wrong, or the certificate has expired. Run `security find-identity -v -p codesigning` and correct `.signing-identity`. If the certificate has expired, renew it in Xcode. The build is aborted, and no unsigned app is installed instead. |
+| `ambiguous (matches … and …)` | Several certificates match the name. Specify the hash instead. |
+| macOS asks whether `codesign` may use the key | Choose Always Allow. |
+| `errSecInternalComponent` | The keychain is locked, for example when logged in over SSH. Unlock it with `security unlock-keychain`. |
 
-## Anslutning
+## Connection
 
-Appen loggar in på servern med en egen SSH-nyckel och hanterar aldrig serverns lösenord. Nyckeln läggs upp en gång, i fem steg. I exemplen står `användare@server` för din egen adress, till exempel `anna@192.168.1.10`.
+The app logs in to the server with a key of its own and never handles the server's password. The key is set up once, in five steps. In the examples, `user@server` stands for your own address, for example `alice@192.168.1.10`.
 
-### Förutsättningar
+### Prerequisites
 
-- Servern kör en SSH-server och har rsync version 3 eller senare. På Ubuntu och Debian installeras båda med `sudo apt install openssh-server rsync`.
-- Du kan logga in på servern från Macen, med lösenord eller med en nyckel du redan har.
+- The server runs an SSH server and has rsync version 3 or later. On Ubuntu and Debian both are installed with `sudo apt install openssh-server rsync`.
+- You can log in to the server from the Mac, with a password or with a key you already have.
 
-### 1. Kontrollera att servern går att nå
+### 1. Check that the server is reachable
 
 ```bash
-ssh användare@server 'echo ansluten; rsync --version | head -1'
+ssh user@server 'echo connected; rsync --version | head -1'
 ```
 
-Första gången frågar `ssh` om serverns värdnyckel ska godkännas. Svara `yes`. Därefter skriver du lösenordet. Utskriften ska sluta så här:
+The first time, `ssh` asks whether to accept the server's host key. Answer `yes`. Then type the password. The output should end like this:
 
 ```
-ansluten
+connected
 rsync  version 3.2.7  protocol version 31
 ```
 
-Står det `openrsync` eller en version under 3 fungerar inte servern som mål.
+If it says `openrsync` or a version below 3, the server does not work as a destination.
 
-### 2. Skapa nyckeln
+### 2. Create the key
 
 ```bash
 ssh-keygen -t ed25519 -N "" -C filsynk -f ~/.ssh/filsynk_ed25519
 ```
 
-- `-t ed25519` väljer nyckeltyp.
-- `-N ""` ger en nyckel utan lösenfras, vilket krävs för att synken ska gå obevakad.
-- `-C filsynk` sätter en kommentar som gör nyckeln lätt att känna igen på servern.
-- `-f` anger var nyckeln sparas.
+- `-t ed25519` chooses the key type.
+- `-N ""` gives a key without a passphrase, which is required for the sync to run unattended.
+- `-C filsynk` sets a comment that makes the key easy to recognize on the server.
+- `-f` says where the key is saved.
 
-Kommandot skapar två filer: den privata nyckeln `~/.ssh/filsynk_ed25519`, som aldrig lämnar Macen, och den publika `~/.ssh/filsynk_ed25519.pub`, som läggs på servern. Finns filen redan frågar `ssh-keygen` innan något skrivs över; svara då `n` och använd den befintliga.
+The command creates two files: the private key `~/.ssh/filsynk_ed25519`, which never leaves the Mac, and the public key `~/.ssh/filsynk_ed25519.pub`, which is put on the server. If the file already exists, `ssh-keygen` asks before overwriting anything; answer `n` and use the existing one.
 
-Appen skapar nyckeln själv när du trycker Testa anslutning, om den saknas. Steget kan alltså hoppas över.
+The app creates the key itself when you press Test connection, if it is missing. So this step can be skipped.
 
-### 3. Lägg den publika nyckeln på servern
-
-```bash
-ssh-copy-id -i ~/.ssh/filsynk_ed25519.pub användare@server
-```
-
-Här skriver du serverns lösenord en sista gång, direkt till `ssh`. Appen ser det aldrig. Kommandot lägger till en rad i `~/.ssh/authorized_keys` på servern.
-
-Om `ssh-copy-id` inte går att använda gör det här samma sak:
+### 3. Put the public key on the server
 
 ```bash
-cat ~/.ssh/filsynk_ed25519.pub | ssh användare@server 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'
+ssh-copy-id -i ~/.ssh/filsynk_ed25519.pub user@server
 ```
 
-### 4. Kontrollera att nyckeln fungerar utan frågor
+Here you type the server's password one last time, directly to `ssh`. The app never sees it. The command adds a line to `~/.ssh/authorized_keys` on the server.
 
-Det här är samma inloggning som appen gör:
+If `ssh-copy-id` cannot be used, this does the same thing:
 
 ```bash
-ssh -i ~/.ssh/filsynk_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 användare@server 'echo ansluten; rsync --version | head -1'
+cat ~/.ssh/filsynk_ed25519.pub | ssh user@server 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'
 ```
 
-Utskriften ska vara densamma som i steg 1, utan att något lösenord efterfrågas. `BatchMode=yes` gör att `ssh` misslyckas i stället för att fråga, precis som i appen.
+### 4. Check that the key works without prompts
 
-### 5. Anslut i appen
+This is the same login the app does:
 
-Skriv serveradressen i Inställningar och tryck **Testa anslutning**. Testet kontrollerar att inloggningen fungerar utan fråga och att serverns rsync är version 3 eller senare, och det skapar och slår upp mapparna på servern. Lyckas det står det `✓ Ansluten, rsync 3.x.y`.
+```bash
+ssh -i ~/.ssh/filsynk_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 user@server 'echo connected; rsync --version | head -1'
+```
 
-- **Inget synkas mot en server förrän testet lyckats mot exakt den adressen.** Ändrar du adressen måste du testa igen. Testet sparar också serverns hemkatalog, både med och utan uppslagna symlänkar (`verifiedHome` och `verifiedLogicalHome` i `config.json`).
-- En mapp på servern som är hemkatalogen, `/` eller något ovanför hemkatalogen nekas, liksom `~/.ssh` och allt under den och sökvägar med `.` eller `..`. Det gäller även om `config.json` ändras för hand.
-- Okända värdnycklar godkänns aldrig automatiskt. Steg 1 gör servern känd på vanligt sätt.
+The output should be the same as in step 1, without any password being asked for. `BatchMode=yes` makes `ssh` fail instead of asking, just as in the app.
 
-### Annan port, annat namn eller åtkomst utifrån
+### 5. Connect in the app
 
-Appen anropar det vanliga `ssh`, som läser `~/.ssh/config`. Lägg in servern där om den lyssnar på en annan port än 22, eller om du vill kunna nå den under samma namn både hemma och borta:
+Type the server address in Settings and press **Test connection**. The test checks that the login works without a prompt and that the server's rsync is version 3 or later, and it creates and looks up the folders on the server. If it succeeds, it says `✓ Connected, rsync 3.x.y`.
+
+- **Nothing is synced to a server until the test has succeeded against exactly that address.** If you change the address, you must test again. The test also saves the server's home directory, both with and without symlinks resolved (`verifiedHome` and `verifiedLogicalHome` in `config.json`).
+- A folder on the server that is the home directory, `/` or anything above the home directory is refused, as are `~/.ssh` and everything under it and paths with `.` or `..`. This applies even if `config.json` is edited by hand.
+- Unknown host keys are never accepted automatically. Step 1 makes the server known in the usual way.
+
+### Other port, other name or access from outside
+
+The app calls the ordinary `ssh`, which reads `~/.ssh/config`. Put the server there if it listens on a port other than 22, or if you want to reach it under the same name both at home and away:
 
 ```
-Host minserver
+Host myserver
     HostName 192.168.1.10
-    User anna
+    User alice
     Port 2222
 ```
 
-Skriv sedan `minserver` som adress i appen. Kontrollera först med `ssh minserver` att uppgifterna stämmer.
+Then type `myserver` as the address in the app. First check with `ssh myserver` that the details are right.
 
-Att nå en server på hemmanätet utifrån kräver VPN eller liknande, och det ligger utanför appen. Går servern inte att nå köas ändringarna tills den gör det.
+Reaching a server on the home network from outside requires a VPN or similar, and that is outside the app. If the server cannot be reached, the changes are queued until it can.
 
-### Se, byta eller dra in nyckeln
+### View, replace or revoke the key
 
-Se att nyckeln ligger på servern:
+See that the key is on the server:
 
 ```bash
-ssh användare@server 'grep filsynk ~/.ssh/authorized_keys'
+ssh user@server 'grep filsynk ~/.ssh/authorized_keys'
 ```
 
-Se nyckelns fingeravtryck på Macen:
+See the key's fingerprint on the Mac:
 
 ```bash
 ssh-keygen -lf ~/.ssh/filsynk_ed25519.pub
 ```
 
-Dra in nyckeln, så att den inte längre kan logga in. Kommandot tar bort raden på servern och sparar den gamla filen som `authorized_keys.bak`:
+Revoke the key, so that it can no longer log in. The command removes the line on the server and saves the old file as `authorized_keys.bak`:
 
 ```bash
-ssh användare@server "sed -i.bak '/ filsynk\$/d' ~/.ssh/authorized_keys"
+ssh user@server "sed -i.bak '/ filsynk\$/d' ~/.ssh/authorized_keys"
 ```
 
-Ta därefter bort nyckeln på Macen:
+Then delete the key on the Mac:
 
 ```bash
 rm ~/.ssh/filsynk_ed25519 ~/.ssh/filsynk_ed25519.pub
 ```
 
-Byta nyckel gör du genom att dra in den gamla och gå igenom steg 2 till 5 igen.
+To replace the key, revoke the old one and go through steps 2 to 5 again.
 
-### Felsökning av anslutningen
+### Troubleshooting the connection
 
-| Det här händer | Orsak och åtgärd |
+| What happens | Cause and fix |
 |---|---|
-| Appen visar "Servern accepterar inte nyckeln ännu" | Den publika nyckeln ligger inte på servern, eller så är adressens användarnamn fel. Gör steg 3 och 4. |
-| Steg 4 ger `Permission denied (publickey,password)` | Samma sak. Kontrollera också rättigheterna på servern: `~/.ssh` ska vara `700` och `~/.ssh/authorized_keys` `600`, och hemkatalogen får inte vara skrivbar för andra. |
-| `Host key verification failed` | Servern är okänd för Macen, eller har bytt värdnyckel efter en ominstallation. Logga in en gång för hand med `ssh användare@server`. Har servern bytt nyckel tar du först bort den gamla med `ssh-keygen -R server`. |
-| Appen visar "Servern nås inte" | Fel adress, servern är avstängd eller så är du på ett annat nät. `nc -z -G 5 server 22` visar om porten går att nå. |
-| Appen visar "Servern behöver rsync 3 eller senare" | Installera rsync på servern, se Förutsättningar. |
-| Inget hjälper | Lägg till `-v` i kommandot i steg 4. Då skriver `ssh` ut varje steg i inloggningen. |
+| The app shows "The server does not accept the key yet" | The public key is not on the server, or the user name in the address is wrong. Do steps 3 and 4. |
+| Step 4 gives `Permission denied (publickey,password)` | The same thing. Also check the permissions on the server: `~/.ssh` must be `700` and `~/.ssh/authorized_keys` `600`, and the home directory must not be writable by others. |
+| `Host key verification failed` | The server is unknown to the Mac, or has changed its host key after a reinstall. Log in once by hand with `ssh user@server`. If the server has changed its key, first remove the old one with `ssh-keygen -R server`. |
+| The app shows "The server cannot be reached" | Wrong address, the server is switched off or you are on a different network. `nc -z -G 5 server 22` shows whether the port can be reached. |
+| The app shows "The server needs rsync 3 or later" | Install rsync on the server, see Prerequisites. |
+| Nothing helps | Add `-v` to the command in step 4. `ssh` then prints every step of the login. |
 
-### Tillåtna tecken
+### Allowed characters
 
-Sökvägen på servern och serveradressen skickas till serverns skal, så bara ofarliga tecken godtas:
+The path on the server and the server address are passed to the server's shell, so only harmless characters are accepted:
 
-- **Sökväg på servern:** bokstäver (även å, ä, ö) och siffror samt `. _ - / + @ , = %`. Ett `~` får bara stå först och följas av `/` eller ingenting (`~/Säkerhetskopia-2026/Mac_1` går bra, `~/R&D` eller `~/Foto*` nekas).
-- **Serveradress:** bokstäverna a–z, siffror och `. _ - @ : [ ] %`, och den får inte börja med `-` (`user@192.168.1.10`, `server.example.com`, `user@[fe80::1%en0]`). Ett användarnamn med å, ä eller ö går alltså inte; `användare@server` i exemplen står bara för din egen adress.
-- **Nyckelfilen** får inte innehålla mellanslag, citattecken, `$`, `` ` `` eller `\`, och den fullständiga sökvägen (med hemkatalogen i stället för `~`) får inte innehålla mellanslag.
-- **Undantag** är vanliga mönster som `node_modules` eller `*.tmp`. Ett undantag får inte vara tomt eller börja med `!`, `+ `, `- `, `: ` eller `. `, eftersom rsync läser sådana rader som regler.
-- **Mappar på Macen** får inte innehålla FileSyncs egna filer (`~/Library/Logs/Filsynk` och `~/Library/Application Support/Filsynk`); att bevaka hela hemkatalogen nekas därför.
+- **Path on the server:** letters (including å, ä, ö) and digits, and `. _ - / + @ , = %`. A `~` may only come first and be followed by `/` or nothing (`~/Backup-2026/Mac_1` is fine, `~/R&D` or `~/Photo*` is refused).
+- **Server address:** the letters a–z, digits and `. _ - @ : [ ] %`, and it must not start with `-` (`user@192.168.1.10`, `server.example.com`, `user@[fe80::1%en0]`). A user name with å, ä or ö therefore does not work; `user@server` in the examples only stands for your own address.
+- **The key file** must not contain spaces, quotation marks, `$`, `` ` `` or `\`, and the full path (with the home directory instead of `~`) must not contain spaces.
+- **Exclusions** are ordinary patterns such as `node_modules` or `*.tmp`. An exclusion must not be empty or start with `!`, `+ `, `- `, `: ` or `. `, because rsync reads such lines as rules.
+- **Folders on the Mac** must not contain FileSync's own files (`~/Library/Logs/Filsynk` and `~/Library/Application Support/Filsynk`); watching the whole home directory is therefore refused.
 
-Avvägning: en nyckel utan lösenfras betyder att den som kommer åt ditt användarkonto på Macen också kan logga in på servern. Det är priset för att synken ska fungera obevakad. Nyckeln är egen för FileSync, så du kan ta bort dess rad ur `~/.ssh/authorized_keys` på servern utan att något annat påverkas.
+Trade-off: a key without a passphrase means that anyone who gets at your user account on the Mac can also log in to the server. That is the price of the sync running unattended. The key is dedicated to FileSync, so you can remove its line from `~/.ssh/authorized_keys` on the server without affecting anything else.
 
-Konfigurationen ligger i `~/Library/Application Support/Filsynk/config.json`. Varje mapp har en lista `destinations` med ett mål per post: `{"kind":"server","path":…}` eller `{"kind":"disk","volumeUUID":…,"volumeName":…,"path":…}`. En äldre fil med `remotePath` läses och skrivs om i den nya formen nästa gång något sparas. Loggen ligger i `~/Library/Logs/Filsynk/filsynk.log` ("Visa logg" i menyn). Går `config.json` inte att läsa visar appen ett fel, lämnar filen orörd och låser inställningarna tills filen rättats eller tagits bort och appen startats om.
+The configuration is in `~/Library/Application Support/Filsynk/config.json`. Each folder has a list `destinations` with one destination per entry: `{"kind":"server","path":…}` or `{"kind":"disk","volumeUUID":…,"volumeName":…,"path":…}`. An older file with `remotePath` is read and rewritten in the new form the next time something is saved. The log is in `~/Library/Logs/Filsynk/filsynk.log` ("Show log" in the menu). If `config.json` cannot be read, the app shows an error, leaves the file untouched and locks the settings until the file has been corrected or removed and the app has been restarted.
 
-## Lägga till en mapp
+## Adding a folder
 
-En mapp kan ha flera mål: ett på servern och hur många externa diskar som helst. Tabellen i Inställningar har en rad per mål.
+A folder can have several destinations: one on the server and any number of external disks. The table in Settings has one row per destination.
 
-Tryck **+** i Inställningar. Under **Mapp på Macen** väljer du en mapp som redan bevakas eller **Välj mapp…**. Under **Mål** väljer du **Server** eller **Extern disk**:
+Press **+** in Settings. Under **Folder on the Mac** choose a folder that is already watched or **Choose folder…**. Under **Destination** choose **Server** or **External disk**:
 
-- **Server:** ange var mappen ska ligga på servern (förifyllt med `~/` och mappens namn).
-- **Extern disk:** tryck **Välj mapp på disken…** och välj eller skapa en ny, tom mapp på disken. Se Extern disk nedan.
+- **Server:** enter where the folder should be on the server (pre-filled with `~/` and the folder's name).
+- **External disk:** press **Choose folder on the disk…** and choose or create a new, empty folder on the disk. See External disk below.
 
-Tryck sedan **Lägg till**. En mapp som inte redan bevakas går appen igenom innan något sparas. Finns det något att varna för, till exempel filer som bara ligger i iCloud (de laddas ner vid första synken), fler än 100 000 filer eller en egen mapp `Raderat` i toppnivån, visas varningen med knapparna **Lägg till ändå** och **Avbryt**. Inget sparas och ingen synk startar förrän du valt. Utan varningar läggs målet till direkt.
+Then press **Add**. A folder that is not already watched is inspected by the app before anything is saved. If there is anything to warn about, for example files that are only in iCloud (they are downloaded at the first sync), more than 100,000 files or a folder of its own called `Raderat` (Swedish for "deleted") at the top level, the warning is shown with the buttons **Add anyway** and **Cancel**. Nothing is saved and no sync starts until you have chosen. Without warnings, the destination is added directly.
 
-**–** tar bort det markerade målet ur appen. Inget tas bort på servern eller disken. Försvinner mappens sista mål bevakas den inte längre.
+**–** removes the selected destination from the app. Nothing is removed on the server or the disk. If a folder's last destination is removed, it is no longer watched.
 
-## Så ser det ut på servern
+## What it looks like on the server
 
-Mappens innehåll speglas rakt av. `Raderat/` ligger i målmappens toppnivå:
+The contents of the folder are mirrored as they are. `Raderat/` is at the top level of the destination folder:
 
 ```
-/home/användare/Sync/             <- spegel av ~/Sync på Macen
-  rapport.docx
-  Projekt/
-    anteckningar.md
-  Raderat/                        <- finns bara på servern
-    2026-11-17_143205/            <- ett synktillfälle (lokal tid, start)
-      rapport.docx                <- föregående version, överskriven
-      Projekt/
-        gammal.txt                <- raderad på Macen
+/home/user/Sync/                  <- mirror of ~/Sync on the Mac
+  report.docx
+  Projects/
+    notes.md
+  Raderat/                        <- exists only on the server
+    2026-11-17_143205/            <- one sync run (local time, start)
+      report.docx                 <- previous version, overwritten
+      Projects/
+        old.txt                   <- deleted on the Mac
 ```
 
-- `Raderat/` rensas bara för hand. Appen tar aldrig bort något på servern.
-- Namnet `Raderat` är reserverat i toppnivån av varje bevakad mapp. Finns en sådan mapp på Macen säkerhetskopieras den inte, och appen varnar.
+- `Raderat/` is only emptied by hand. The app never removes anything on the server.
+- The name `Raderat` is reserved at the top level of every watched folder. If such a folder exists on the Mac, it is not backed up, and the app warns.
 
-## Återställa
+## Restoring
 
-Hämta en fil som den ser ut nu:
+Fetch a file as it looks now:
 
 ```bash
-rsync -a användare@server:/home/användare/Sync/rapport.docx ~/Återställt/
+rsync -a user@server:/home/user/Sync/report.docx ~/Restored/
 ```
 
-Hämta en äldre version eller en raderad fil under `Raderat/`:
+Fetch an older version or a deleted file under `Raderat/`:
 
 ```bash
-rsync -a användare@server:/home/användare/Sync/Raderat/2026-11-17_143205/rapport.docx ~/Återställt/
+rsync -a user@server:/home/user/Sync/Raderat/2026-11-17_143205/report.docx ~/Restored/
 ```
 
-`/home/användare/Sync` står för mappens sökväg på servern, alltså `path` i mappens mål av slaget `server` i `config.json`. Lägg gärna filen på en annan plats än originalet så att du inte skriver över något av misstag.
+`/home/user/Sync` stands for the folder's path on the server, that is, `path` in the folder's destination of kind `server` in `config.json`. It is a good idea to put the file somewhere other than the original so that you do not overwrite anything by mistake.
 
-## Extern disk
+## External disk
 
-Samma mapp kan speglas till en extern disk, vid sidan av servern eller i stället för den. Disken fungerar som servern: innehållet speglas, och det som raderas eller skrivs över flyttas till `Raderat/`.
+The same folder can be mirrored to an external disk, alongside the server or instead of it. The disk works like the server: the contents are mirrored, and what is deleted or overwritten is moved to `Raderat/`.
 
-### Lägga till
+### Adding
 
-Inställningar → Mappar → **+** → **Extern disk** → **Välj mapp på disken…**. Mappen på disken måste vara ny och tom; Finders egna dolda filer (`.DS_Store` och `._*`) räknas inte. Skapa den i väljaren med **Ny mapp**. Disken själv, alltså dess rot, går inte att välja.
+Settings → Folders → **+** → **External disk** → **Choose folder on the disk…**. The folder on the disk must be new and empty; Finder's own hidden files (`.DS_Store` and `._*`) do not count. Create it in the picker with **New Folder**. The disk itself, that is, its root, cannot be chosen.
 
-Appen lägger en liten fil, `.filsynk`, i mappen. Den anger vilken mapp på Macen som hör till mappen på disken. Appen synkar aldrig in i en mapp som saknar filen eller vars fil hör till en annan mapp, och en mapp med innehåll godtas bara om dess fil hör till just den här mappen. Att en mapp byter namn på Macen räknas som en annan mapp: den kan inte återanvända sin gamla mapp på disken, välj en ny.
+The app puts a small file, `.filsynk`, in the folder. It says which folder on the Mac belongs to the folder on the disk. The app never syncs into a folder that lacks the file or whose file belongs to another folder, and a folder with contents is accepted only if its file belongs to this very folder. A folder that is renamed on the Mac counts as a different folder: it cannot reuse its old folder on the disk, so choose a new one.
 
-Disken ska vara formaterad som APFS, Mac OS Extended eller exFAT.
+The disk should be formatted as APFS, Mac OS Extended or exFAT.
 
-### Så känns disken igen
+### How the disk is identified
 
-Disken känns igen på sitt volym-id, aldrig på namnet. Kopplar du in en annan disk med samma namn händer ingenting. En disk som formaterats om eller bytts ut är en ny disk, och målet måste läggas till igen. Namnet i tabellen och i menyn är bara en visning.
+The disk is identified by its volume ID, never by its name. If you connect another disk with the same name, nothing happens. A disk that has been reformatted or replaced is a new disk, and the destination must be added again. The name in the table and in the menu is only a label.
 
-### Inkoppling och utmatning
+### Connecting and ejecting
 
-- När den valda disken kopplas in synkas den direkt.
-- Medan disken är inkopplad följer den samma väntetid som servern.
-- När disken inte är inkopplad visar raden `Inte inkopplad · senast <datum>` och inget försöks. Menyradens ikon påverkas inte av en frånvarande disk.
-- Vid utmatning avbryts en pågående synk, så att disken går att mata ut. Nekar macOS utmatningen återupptar appen synken efter ungefär en minut.
-- En bevakad mapp som själv ligger på en extern disk synkas inte medan den disken är frånkopplad.
+- When the chosen disk is connected, it is synced right away.
+- While the disk is connected, it follows the same wait time as the server.
+- When the disk is not connected, the row shows `Not connected · last synced <date>` and nothing is attempted. The menu-bar icon is not affected by an absent disk.
+- On eject, a running sync is cancelled so that the disk can be ejected. If macOS refuses the eject, the app resumes the sync after about a minute.
+- A watched folder that is itself on an external disk is not synced while that disk is disconnected.
 
 ### Format
 
-- **APFS och Mac OS Extended** behåller rättigheter och ägare.
-- **exFAT** behåller inte rättigheter och ägare. Symboliska länkar och alla filnamn fungerar. macOS skapar en fil på 4 kB, `._<namn>`, bredvid varje fil på exFAT. Appen ignorerar dem.
+- **APFS and Mac OS Extended** keep permissions and owners.
+- **exFAT** does not keep permissions and owners. Symbolic links and all file names work. macOS creates a 4 kB file, `._<name>`, next to every file on exFAT. The app ignores them.
 
-### Raderat på disken
+### Raderat on the disk
 
-`Raderat/<tidpunkt>/` i mappen på disken fungerar som på servern: raderade och överskrivna filer flyttas dit, ingenting tas bort, och mappen rensas bara för hand. En fil som ersätts av en mapp eller länk med samma namn flyttas också dit först. Begränsning: en symbolisk länk vars mål ändras ersätts utan att den gamla länken sparas.
+`Raderat/<timestamp>/` in the folder on the disk works as on the server: deleted and overwritten files are moved there, nothing is removed, and the folder is only emptied by hand. A file that is replaced by a folder or link with the same name is also moved there first. Limitation: a symbolic link whose target changes is replaced without the old link being saved.
 
-### Tillstånd
+### Permission
 
-Första gången appen når en extern disk frågar macOS om tillstånd för flyttbara volymer. Svara Tillåt.
+The first time the app reaches an external disk, macOS asks for permission for removable volumes. Answer Allow.
 
-## Bra att veta
+## Good to know
 
-- **Byta namn på eller flytta en mapp** inuti en bevakad mapp ser ut som radering plus nya filer. Allt under den laddas upp igen och den gamla kopian hamnar i `Raderat/`. Inget går förlorat, men det tar tid och diskutrymme. Samma sak gäller om du byter namn på mappen på servern eller på disken, eller på Macen: det är en borttagning plus en ny mapp. Byts namnet på mappen på Macen hör dessutom markören på disken till den gamla mappen, så ett nytt mål på disken måste läggas till.
-- **Filer som ändras ofta** ger en undanflyttad kopia per synktillfälle, som mest ungefär en per minut vid standardinställningen.
-- **`Raderat/` växer**, på servern och på disken, tills du rensar den för hand.
-- **Avslutas appen stannar synken.** Det som ändras under tiden fångas vid nästa start.
-- **macOS integritetsskydd:** `~/Sync` kräver inget tillstånd. Läggs Skrivbord, Dokument eller Hämtade filer till frågar macOS om lov en gång.
-- **Osignerad app:** appen byggs lokalt och signeras utan utvecklarcertifikat. Det fungerar på den egna Macen men går inte att dela.
-- **Första synken in i en mapp på servern som redan har innehåll** flyttar det innehållet till `Raderat/`. Inget försvinner.
-- **Dyra nätverk:** automatisk synk väntar tills nättypen är känd vid start och hålls när macOS markerar nätet som dyrt eller begränsat (delning från telefon, lågdataläge). "Synka nu" körs alltid. Går servern inte att nå köas ändringarna och försöks igen (1, 2, 5, 15 minuter, sedan var 15:e) och direkt när nätet ändras.
-- **Nekad inloggning** ger notis direkt. Därefter försöker appen bara var 15:e minut och inte vid nätbyte, så att servern inte ser en ström av misslyckade inloggningar (fail2ban kan annars stänga ute Macen). "Synka nu", "Fortsätt" och en ändring i Inställningar försöker direkt.
-- **Notiser:** misslyckas synken minst tre gånger i rad kommer en notis vid det första riktiga felet i serien (till exempel full disk), en gång per serie. Har en mapp inte synkats till servern på över ett dygn kommer en notis, en gång per dygn. En disk som inte är inkopplad ger ingen sådan notis.
-- **Ändrade inställningar** (till exempel undantag) nollställer inte en mapps status. En synk som pågår får bli klar om inget som påverkar den har ändrats.
-- **Statusen "Inte inställd"** visas så länge någon mapp inte är inställd, även om andra mappar är synkade.
-- **Frånkopplad disk** ger raden `Inte inkopplad`. Är disken det enda som är kvar att synka visar menyn "Disken är inte inkopplad"; är något annat mål inkopplat gäller statusen för det.
+- **Renaming or moving a folder** inside a watched folder looks like a deletion plus new files. Everything under it is uploaded again and the old copy ends up in `Raderat/`. Nothing is lost, but it takes time and disk space. The same applies if you rename the folder on the server or on the disk, or on the Mac: it is a removal plus a new folder. If the folder is renamed on the Mac, the marker on the disk also belongs to the old folder, so a new destination on the disk must be added.
+- **Files that change often** give one moved-aside copy per sync run, at most about one per minute with the default setting.
+- **`Raderat/` grows,** on the server and on the disk, until you empty it by hand.
+- **If the app quits, the sync stops.** What changes in the meantime is picked up at the next start.
+- **macOS privacy protection:** `~/Sync` needs no permission. If Desktop, Documents or Downloads is added, macOS asks for permission once.
+- **Unsigned app:** the app is built locally and signed without a developer certificate. That works on your own Mac but cannot be shared.
+- **The first sync into a folder on the server that already has contents** moves those contents to `Raderat/`. Nothing disappears.
+- **Expensive networks:** automatic sync waits until the network type is known at startup and is held when macOS marks the network as expensive or constrained (tethering from a phone, Low Data Mode). "Sync now" always runs. If the server cannot be reached, the changes are queued and retried (1, 2, 5, 15 minutes, then every 15th) and immediately when the network changes.
+- **A denied login** gives a notification right away. After that, the app only retries every 15 minutes and not on a network change, so that the server does not see a stream of failed logins (fail2ban could otherwise lock the Mac out). "Sync now", "Resume" and a change in Settings retry right away.
+- **Notifications:** if the sync fails at least three times in a row, a notification comes at the first real error in the series (for example a full disk), once per series. If a folder has not been synced to the server for more than a day, a notification comes, once a day. A disk that is not connected gives no such notification.
+- **Changed settings** (for example exclusions) do not reset a folder's status. A sync that is running is allowed to finish if nothing that affects it has changed.
+- **The status "Not set up"** is shown as long as any folder is not set up, even if other folders are synced.
+- **A disconnected disk** gives the row `Not connected`. If the disk is the only thing left to sync, the menu shows "The disk is not connected"; if another destination is connected, the status for that one applies.
 
-## Tester
+## Tests
 
 ```bash
 swift test
 ```
 
-Integrationstesterna för själva synken (`SyncIntegrationTests`) kräver rsync 3.x på Macen (`brew install rsync`) och hoppas annars över. Systemets `/usr/bin/rsync` är `openrsync` och duger inte som mottagare.
+The integration tests for the sync itself (`SyncIntegrationTests`) require rsync 3.x on the Mac (`brew install rsync`) and are otherwise skipped. The system's `/usr/bin/rsync` is `openrsync` and does not work as a receiver.
 
-Det finns också ett prov hela vägen mot den riktiga servern (`EndToEndTests`), som bara körs när du pekar ut servern och nyckeln:
+There is also a test all the way against the real server (`EndToEndTests`), which only runs when you point out the server and the key:
 
 ```bash
-FILSYNK_E2E_SERVER=användare@server FILSYNK_E2E_IDENTITY=~/.ssh/filsynk_ed25519 swift test --filter EndToEndTests
+FILSYNK_E2E_SERVER=user@server FILSYNK_E2E_IDENTITY=~/.ssh/filsynk_ed25519 swift test --filter EndToEndTests
 ```
 
-Det använder en temporär lokal mapp och en egen katalog `~/filsynk-interop-e2e-<slumptal>` på servern, som tas bort efteråt. `~/Sync` rörs aldrig. Skriptet `scripts/verify-rsync-interop.sh <server> <nyckel>` provar bara rsync-flaggorna mot servern.
+It uses a temporary local folder and a directory of its own, `~/filsynk-interop-e2e-<random-number>`, on the server, which is removed afterwards. `~/Sync` is never touched. The script `scripts/verify-rsync-interop.sh <server> <key>` only tries the rsync flags against the server.
 
-Ytterligare ett prov kör hela kedjan mot riktiga volymer, utan någon fysisk disk (`DiskImageTests`). Det skapar egna diskavbilder (APFS och exFAT, 40 MB) i en temporär katalog, monterar dem där med `hdiutil attach -mountrandom` och kopplar loss dem igen efteråt. Så hamnar inget under `/Volumes` och en riktig extern disk rörs aldrig. Det provar synk till båda formaten, att överskrivna och raderade filer hamnar i `Raderat/`, svenska filnamn och symboliska länkar på exFAT, att en disk som kopplas in igen hämtar ikapp av sig själv, och att en annan avbild med samma namn men annat id lämnas ifred. Det körs bara när du ber om det:
+Another test runs the whole chain against real volumes, without any physical disk (`DiskImageTests`). It creates its own disk images (APFS and exFAT, 40 MB) in a temporary directory, mounts them there with `hdiutil attach -mountrandom` and detaches them again afterwards. That way nothing ends up under `/Volumes` and a real external disk is never touched. It tests sync to both formats, that overwritten and deleted files end up in `Raderat/`, Swedish file names and symbolic links on exFAT, that a disk that is connected again catches up by itself, and that another image with the same name but a different ID is left alone. It only runs when you ask for it:
 
 ```bash
 FILSYNK_DISK_IMAGE_TESTS=1 swift test --filter DiskImageTests
 ```
 
-Avbilderna monteras utan `-nobrowse`, eftersom FileSync inte ser dolda volymer. Det tar ungefär en minut och en avbild kan synas en stund i Finder. Om en körning avbryts innan den hunnit städa: leta efter `filsynk-diskprov-` i utskriften från `hdiutil info` och koppla loss just den enheten med `hdiutil detach <enhet>`.
+The images are mounted without `-nobrowse`, because FileSync does not see hidden volumes. It takes about a minute and an image may be visible in Finder for a while. If a run is interrupted before it has cleaned up: look for `filsynk-diskprov-` in the output from `hdiutil info` and detach exactly that device with `hdiutil detach <device>`.
 
-## Checklista
+## Checklist
 
-Gör detta en gång. Anteckna det som inte stämmer. `användare@server` och `/home/användare` står för din egen server, `Backupdisk` för din egen externa disk.
+Do this once. Note down anything that does not match. `user@server` and `/home/user` stand for your own server, `Backupdisk` for your own external disk.
 
-1. **Installera.** `scripts/build-app.sh --install`, sedan `open /Applications/FileSync.app`.
+1. **Install.** `scripts/build-app.sh --install`, then `open /Applications/FileSync.app`.
 
-2. **Utseende.**
-   - Ikonen syns i menyraden och ingen ikon syns i Dock.
-   - Menyn har statusrad överst (till exempel "Allt synkat · 14:32"), en rad per mål (till exempel `~/Sync → Server: ~/Sync   ✓ 14:32`), och sedan Synka nu, Pausa (blir Fortsätt), Inställningar…, Visa logg och Avsluta FileSync.
-   - "Visa logg" öppnar `~/Library/Logs/Filsynk/filsynk.log`.
+2. **Appearance.**
+   - The icon is in the menu bar and no icon is in the Dock.
+   - The menu has a status line at the top (for example "All synced · 14:32"), one row per destination (for example `~/Sync → Server: ~/Sync   ✓ 14:32`), and then Sync now, Pause (becomes Resume), Settings…, Show log and Quit FileSync.
+   - "Show log" opens `~/Library/Logs/Filsynk/filsynk.log`.
 
-3. **Inställningar** (ta först bort `~/Library/Application Support/Filsynk/config.json`):
-   1. Inställningarna öppnas av sig själva med en rad i tabellen med `~/Sync` under På Macen och `Server: ~/Sync` under Mål, tom adress och en kort vägledning under Server.
-   2. Skriv `användare@server` och tryck Testa anslutning: `✓ Ansluten, rsync 3.x.y`. `config.json` har nu `/home/användare/Sync` som `path` i mappens mål av slaget `server`, och `verifiedServer`, `verifiedHome` och `verifiedLogicalHome`. Kolumnen Mål visar `Server: ~/Sync`.
-   3. Ange en adress som inte finns (`x@192.0.2.1`): `Servern nås inte.` inom cirka 10 sekunder. Ange `x@h;ls`: rött fel, ingenting sparas.
-   4. Lägg till en mapp som ligger inuti `~/Sync`: rött fel, ingenting sparas. Ange `~` eller `~/R&D` som mapp på servern: nekas.
-   5. Lägg till en mapp med filer som bara finns i iCloud (eller en egen mapp `Raderat` i toppnivån): varningen visas med Lägg till ändå och Avbryt. Avbryt sparar ingenting; Lägg till ändå lägger till mappen och synken startar först då.
-   6. Skriv `node_modules, *.tmp` i Undantag: `config.json` har `"exclude": ["node_modules", "*.tmp"]`. Skriv `!` i Undantag: rött fel, ingenting sparas.
-   (Sätt tillbaka rätt serveradress och testa anslutningen igen efter punkt 3.)
+3. **Settings** (first remove `~/Library/Application Support/Filsynk/config.json`):
+   1. Settings opens by itself with one row in the table with `~/Sync` under On the Mac and `Server: ~/Sync` under Destination, an empty address and a short guide under Server.
+   2. Type `user@server` and press Test connection: `✓ Connected, rsync 3.x.y`. `config.json` now has `/home/user/Sync` as `path` in the folder's destination of kind `server`, and `verifiedServer`, `verifiedHome` and `verifiedLogicalHome`. The Destination column shows `Server: ~/Sync`.
+   3. Enter an address that does not exist (`x@192.0.2.1`): `The server cannot be reached.` within about 10 seconds. Enter `x@h;ls`: red error, nothing is saved.
+   4. Add a folder that is inside `~/Sync`: red error, nothing is saved. Enter `~` or `~/R&D` as the folder on the server: refused.
+   5. Add a folder with files that are only in iCloud (or a folder of its own called `Raderat` at the top level): the warning is shown with Add anyway and Cancel. Cancel saves nothing; Add anyway adds the folder and the sync only starts then.
+   6. Type `node_modules, *.tmp` in Exclusions: `config.json` has `"exclude": ["node_modules", "*.tmp"]`. Type `!` in Exclusions: red error, nothing is saved.
+   (Put the right server address back and test the connection again after item 3.)
 
-4. **Prov hela vägen** (första gången något skrivs i `~/Sync` på servern). Det som kontrolleras på servern görs med `ssh användare@server 'ls -R ~/Sync'` eller `cat`:
+4. **Test all the way** (the first time anything is written in `~/Sync` on the server). What is checked on the server is done with `ssh user@server 'ls -R ~/Sync'` or `cat`:
 
-   | # | Gör på Macen | Förväntat |
+   | # | Do on the Mac | Expected |
    |---|---|---|
-   | 1 | `echo v1 > ~/Sync/prov.txt` | Ikonen visar väntande och sedan synkat inom cirka 70 s. På servern finns `prov.txt` |
-   | 2 | `echo v2 > ~/Sync/prov.txt` | På servern innehåller `prov.txt` `v2` och `~/Sync/Raderat/<tid>/prov.txt` innehåller `v1` |
-   | 3 | `rm ~/Sync/prov.txt` | På servern är `prov.txt` borta ur `~/Sync` och finns i en ny `Raderat/<tid>/` med `v2` |
-   | 4 | Stäng av wifi, `echo x > ~/Sync/offline.txt`, vänta 90 s | Ikonen visar "väntar på servern". Ingen notis |
-   | 5 | Slå på wifi | På servern kommer `offline.txt` fram utan att man gör något |
-   | 6 | `Pausa`, `echo y > ~/Sync/paus.txt`, vänta 90 s, `Fortsätt` | På servern finns ingen `paus.txt` under pausen. Den kommer fram direkt efter `Fortsätt` |
-   | 7 | Dela nät från telefon, `echo z > ~/Sync/dyrt.txt`, vänta 90 s | På servern finns ingen `dyrt.txt`. `Synka nu` skickar den |
-   | 8 | `echo l > ~/Sync/lock.txt`, stäng locket inom 30 s, vänta några minuter, öppna | På servern kommer `lock.txt` fram inom ungefär en minut efter att locket öppnats |
-   | 9 | På servern: flytta bort raden ur `~/.ssh/authorized_keys`, ändra en fil på Macen | Notis `FileSync: inloggningen nekades`. Lägg tillbaka raden på servern och tryck `Synka nu`; synken lyckas |
-   | 10 | Logga ut och in | FileSync startar av sig själv |
-   | 11 | Låt appen stå orörd i 10 min, läs av i Aktivitetskontroll | CPU 0,0 % i vila, minne under 60 MB |
+   | 1 | `echo v1 > ~/Sync/test.txt` | The icon shows pending and then synced within about 70 s. `test.txt` exists on the server |
+   | 2 | `echo v2 > ~/Sync/test.txt` | On the server `test.txt` contains `v2` and `~/Sync/Raderat/<time>/test.txt` contains `v1` |
+   | 3 | `rm ~/Sync/test.txt` | On the server `test.txt` is gone from `~/Sync` and is in a new `Raderat/<time>/` with `v2` |
+   | 4 | Turn off wifi, `echo x > ~/Sync/offline.txt`, wait 90 s | The icon shows "Waiting for the server". No notification |
+   | 5 | Turn on wifi | On the server `offline.txt` appears without anyone doing anything |
+   | 6 | `Pause`, `echo y > ~/Sync/pause.txt`, wait 90 s, `Resume` | On the server there is no `pause.txt` during the pause. It appears right after `Resume` |
+   | 7 | Tether from a phone, `echo z > ~/Sync/expensive.txt`, wait 90 s | On the server there is no `expensive.txt`. `Sync now` sends it |
+   | 8 | `echo l > ~/Sync/lid.txt`, close the lid within 30 s, wait a few minutes, open it | On the server `lid.txt` appears within about a minute after the lid is opened |
+   | 9 | On the server: move the line out of `~/.ssh/authorized_keys`, change a file on the Mac | Notification `FileSync: login denied`. Put the line back on the server and press `Sync now`; the sync succeeds |
+   | 10 | Log out and in | FileSync starts by itself |
+   | 11 | Leave the app untouched for 10 min, check in Activity Monitor | CPU 0.0% at idle, memory under 60 MB |
 
-   Punkt 9 ändrar `authorized_keys` på servern och görs för hand där. Ta efteråt bort provfilerna ur `~/Sync` på Macen; de hamnar i `Raderat/` på servern, vilket är avsett.
+   Item 9 changes `authorized_keys` on the server and is done by hand there. Afterwards, delete the test files from `~/Sync` on the Mac; they end up in `Raderat/` on the server, which is intended.
 
-5. **Extern disk** (en disk som är formaterad som APFS, Mac OS Extended eller exFAT; gör den här delen med en ny, tom mapp på disken):
-   1. Lägg till ett mål: Inställningar → Mappar → **+**, välj en ny mapp på Macen, välj **Extern disk**, **Välj mapp på disken…** och skapa en ny mapp i `/Volumes/Backupdisk`. Texten bredvid knappen blir `Backupdisk: <mappen>`. Raden dyker upp i tabellen med målet `Backupdisk: <mappen>`, och mappen på disken innehåller `.filsynk`. Välj i stället en mapp med innehåll: rött fel, ingenting sparas.
-   2. Se första synken: raden går från `Väntar` till `Synkar…` och sedan `✓ <klockslag>`, och filerna finns på disken.
-   3. Mata ut disken i Finder: pågår en synk avbryts den, utmatningen lyckas och raden visar `Inte inkopplad · senast <datum>`. Menyradens ikon visar inget fel.
-   4. Ändra en fil i mappen på Macen medan disken är utmatad: inget försöks.
-   5. Koppla in disken: synken startar direkt och den ändrade filen kommer ikapp.
-   6. Radera en fil och skriv över en annan på Macen: efter synken ligger de gamla versionerna i `Raderat/<tid>/` i mappen på disken.
-   7. Koppla in en annan disk, med samma namn om det går: ingenting händer, ingen fråga och ingen synk.
+5. **External disk** (a disk formatted as APFS, Mac OS Extended or exFAT; do this part with a new, empty folder on the disk):
+   1. Add a destination: Settings → Folders → **+**, choose a new folder on the Mac, choose **External disk**, **Choose folder on the disk…** and create a new folder in `/Volumes/Backupdisk`. The text next to the button becomes `Backupdisk: <folder>`. The row appears in the table with the destination `Backupdisk: <folder>`, and the folder on the disk contains `.filsynk`. Choose a folder with contents instead: red error, nothing is saved.
+   2. Watch the first sync: the row goes from `Waiting` to `Syncing…` and then `✓ <time of day>`, and the files are on the disk.
+   3. Eject the disk in Finder: if a sync is running it is cancelled, the eject succeeds and the row shows `Not connected · last synced <date>`. The menu-bar icon shows no error.
+   4. Change a file in the folder on the Mac while the disk is ejected: nothing is attempted.
+   5. Connect the disk: the sync starts right away and the changed file catches up.
+   6. Delete one file and overwrite another on the Mac: after the sync, the old versions are in `Raderat/<time>/` in the folder on the disk.
+   7. Connect another disk, with the same name if possible: nothing happens, no prompt and no sync.
 
-6. **Felsökning:**
-   - Om appen inte startar vid inloggning: kontrollera under Systeminställningar > Allmänt > Inloggningsobjekt att FileSync finns och är påslagen, och att appen ligger i `/Applications`. Slå av och på "Starta vid inloggning" i FileSyncs inställningar för att registrera den igen.
-   - Om notiserna inte visas: kontrollera att FileSync får visa notiser under Systeminställningar > Notiser. Varje notis skrivs också i loggen, så den går att läsa där via "Visa logg".
+6. **Troubleshooting:**
+   - If the app does not start at login: check under System Settings > General > Login Items that FileSync is there and turned on, and that the app is in `/Applications`. Turn "Start at login" in FileSync's settings off and on to register it again.
+   - If the notifications are not shown: check that FileSync is allowed to show notifications under System Settings > Notifications. Every notification is also written in the log, so it can be read there via "Show log".
 
-## Licens
+## License
 
-FileSync är fri programvara under MIT-licensen, se [LICENSE](LICENSE). Programmet tillhandahålls i befintligt skick, utan garantier: ha alltid mer än en kopia av det som är viktigt.
+FileSync is free software under the MIT license, see [LICENSE](LICENSE). The program is provided as is, without warranty: always keep more than one copy of what is important.
