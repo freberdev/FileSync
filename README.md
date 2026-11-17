@@ -410,7 +410,7 @@ The disk is identified by its volume ID, never by its name. If you connect anoth
 - When the chosen disk is connected, it is synced right away.
 - While the disk is connected, it follows the same wait time as the server.
 - When the disk is not connected, the row shows `Not connected · last synced <date>` and nothing is attempted. The menu-bar icon is not affected by an absent disk.
-- On eject, a running sync is cancelled so that the disk can be ejected. If macOS refuses the eject, the app resumes the sync after about a minute.
+- On eject, a running sync is canceled so that the disk can be ejected. If macOS refuses the eject, the app resumes the sync after about a minute.
 - A watched folder that is itself on an external disk is not synced while that disk is disconnected.
 
 ### Format
@@ -507,7 +507,7 @@ Do this once. Note down anything that does not match. `user@server` and `/home/u
 5. **External disk** (a disk formatted as APFS, Mac OS Extended or exFAT; do this part with a new, empty folder on the disk):
    1. Add a destination: Settings → Folders → **+**, choose a new folder on the Mac, choose **External disk**, **Choose folder on the disk…** and create a new folder in `/Volumes/Backupdisk`. The text next to the button becomes `Backupdisk: <folder>`. The row appears in the table with the destination `Backupdisk: <folder>`, and the folder on the disk contains `.filsynk`. Choose a folder with contents instead: red error, nothing is saved.
    2. Watch the first sync: the row goes from `Waiting` to `Syncing…` and then `✓ <time of day>`, and the files are on the disk.
-   3. Eject the disk in Finder: if a sync is running it is cancelled, the eject succeeds and the row shows `Not connected · last synced <date>`. The menu-bar icon shows no error.
+   3. Eject the disk in Finder: if a sync is running it is canceled, the eject succeeds and the row shows `Not connected · last synced <date>`. The menu-bar icon shows no error.
    4. Change a file in the folder on the Mac while the disk is ejected: nothing is attempted.
    5. Connect the disk: the sync starts right away and the changed file catches up.
    6. Delete one file and overwrite another on the Mac: after the sync, the old versions are in `Raderat/<time>/` in the folder on the disk.
