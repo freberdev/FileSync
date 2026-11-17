@@ -58,6 +58,9 @@
 "Start" = "Startup";
 "Starta vid inloggning" = "Start at login";
 "Kunde inte ändra inloggningsobjektet" = "Could not change the login item";
+"Språk" = "Language";
+"Följ systemet" = "Same as the system";
+"Språket byts nästa gång FileSync startar." = "The language changes the next time FileSync starts.";
 
 /* Config.swift */
 "Okänt slags mål: %@" = "Unknown kind of destination: %@";

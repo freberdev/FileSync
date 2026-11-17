@@ -58,6 +58,9 @@
 "Start" = "Start";
 "Starta vid inloggning" = "Starta vid inloggning";
 "Kunde inte ändra inloggningsobjektet" = "Kunde inte ändra inloggningsobjektet";
+"Språk" = "Språk";
+"Följ systemet" = "Följ systemet";
+"Språket byts nästa gång FileSync startar." = "Språket byts nästa gång FileSync startar.";
 
 /* Config.swift */
 "Okänt slags mål: %@" = "Okänt slags mål: %@";

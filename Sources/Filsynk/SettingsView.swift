@@ -16,6 +16,8 @@ struct SettingsView: View {
     @State private var formDiskText: String?
     @State private var launchAtLogin = LoginItem.isEnabled
     @State private var loginError: String?
+    @State private var language = AppLanguage.choice
+    @State private var languageNeedsRestart = AppLanguage.needsRestart(AppLanguage.choice)
     @FocusState private var serverFocused: Bool
     @FocusState private var excludesFocused: Bool
 
@@ -35,6 +37,7 @@ struct SettingsView: View {
                 excludesSection
             }
             startSection
+            languageSection
             if let message = model.issue ?? loginError {
                 Text(message).foregroundStyle(.red)
             }
@@ -45,6 +48,8 @@ struct SettingsView: View {
             serverDraft = model.config.server
             excludesDraft = model.config.excludesText()
             launchAtLogin = LoginItem.isEnabled
+            language = AppLanguage.choice
+            languageNeedsRestart = AppLanguage.needsRestart(language)
         }
     }
 
@@ -279,6 +284,27 @@ struct SettingsView: View {
                     }
                     launchAtLogin = LoginItem.isEnabled
                 }))
+        }
+    }
+
+    private var languageSection: some View {
+        Section(L("Språk")) {
+            Picker(L("Språk"), selection: Binding(
+                get: { language },
+                set: { choice in
+                    AppLanguage.setChoice(choice)
+                    language = choice
+                    languageNeedsRestart = AppLanguage.needsRestart(choice)
+                })) {
+                Text(L("Följ systemet")).tag(LanguageChoice.system)
+                Text(verbatim: "Svenska").tag(LanguageChoice.swedish)
+                Text(verbatim: "English").tag(LanguageChoice.english)
+            }
+            if languageNeedsRestart {
+                Text(L("Språket byts nästa gång FileSync startar."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }
