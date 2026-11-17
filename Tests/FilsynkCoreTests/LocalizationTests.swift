@@ -100,4 +100,26 @@ import Testing
         #expect(literals.first { $0.value == "här" }?.isFirstArgument(of: "Text") == true)
         #expect(!literals.contains { $0.value.contains("comment") })
     }
+
+    @Test func scannerCountsArgumentsAndFindsTheCall() {
+        let source = #"""
+        let a = L("%@ och %@", f(x, y), [1, 2].map { $0 + z })
+        let b = L("utan")
+        let c = Button(flag ? "en" : L("två")) { run(p, q) }
+        let d = Text(verbatim: "rak")
+        let e = log?("logg")
+        """#
+        let (literals, problems) = SwiftLiteralScanner.scan(source, file: "x.swift")
+        #expect(problems == [])
+        func find(_ value: String) -> SourceLiteral? { literals.first { $0.value == value } }
+        #expect(find("%@ och %@")?.argumentCount == 2)
+        #expect(find("utan")?.argumentCount == 0)
+        #expect(find("två")?.argumentCount == 0)
+        #expect(find("en")?.call == "Button")
+        #expect(find("en")?.argumentIndex == 0)
+        #expect(find("en")?.isLabeled == false)
+        #expect(find("två")?.call == "L")
+        #expect(find("rak")?.isLabeled == true)
+        #expect(find("logg")?.call == "log")
+    }
 }

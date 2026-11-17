@@ -42,17 +42,22 @@ import Testing
 
     @Test func noLiteralPassedStraightToText() throws {
         let (literals, _) = try scanSources()
-        for literal in literals {
-            var before = literal.before
-            guard before.last == "(" else { continue }
-            before.removeLast()
-            // log?("…")
-            if before.last == "?" { before.removeLast() }
-            guard let name = before.last, Self.textTakingCalls.contains(name) else { continue }
+        for literal in literals where !literal.isLookupKey && literal.argumentIndex == 0 && !literal.isLabeled {
+            guard let name = literal.call, Self.textTakingCalls.contains(name) else { continue }
             if Self.literalsStraightToText.contains(where: { literal.file.hasSuffix("/" + $0.file) && literal.value == $0.value }) {
                 continue
             }
             Issue.record("\(literal.location): a literal straight to \(name)(…) is not passed through L: \(literal.value)")
+        }
+    }
+
+    @Test func everyLookupGetsTheArgumentsItsKeyAsksFor() throws {
+        let (literals, _) = try scanSources()
+        for key in literals where key.isLookupKey {
+            let wanted = formatSpecifiers(key.value).count
+            if key.argumentCount != wanted {
+                Issue.record("\(key.location): the key has \(wanted) format specifiers but L gets \(key.argumentCount.map(String.init) ?? "?") arguments: \(key.value)")
+            }
         }
     }
 

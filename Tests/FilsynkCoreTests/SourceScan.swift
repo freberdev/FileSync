@@ -41,6 +41,15 @@ struct SourceLiteral: Equatable {
     var isRaw: Bool
     /// The tokens before the literal on its nesting level, nearest last: for `L("x")` this is `["L", "("]`.
     var before: [String]
+    /// The call whose parentheses most closely enclose the literal (`"x"` in `f(a ? "x" : y)` is in `f`),
+    /// nil when it is closer inside `[…]` or `{…}`, or outside any call.
+    var call: String? = nil
+    /// Which argument of `call` the literal stands in, from 0.
+    var argumentIndex = 0
+    /// The argument has a label, as in `Text(verbatim: "x")`.
+    var isLabeled = false
+    /// For a key of `L`: the number of arguments after it.
+    var argumentCount: Int? = nil
 
     /// The first argument of a call to the lookup function `L`.
     var isLookupKey: Bool {
@@ -91,12 +100,28 @@ struct SwiftLiteralScanner {
     }
 
     /// Code: tokens, comments and literals. Inside an interpolation it ends at the matching `)`.
+    private struct Frame {
+        /// `(`, `[` or `{`.
+        var opener: Character
+        var call: String?
+        var argumentIndex = 0
+        /// The tokens of the current argument so far.
+        var argumentTokens: [String] = []
+        /// The index in `literals` of the key, when this is a call of `L` with a literal first.
+        var key: Int?
+    }
+
     private mutating func scanCode(untilClosingParen: Bool) {
         var tokens: [String] = []
         var depth = 0
+        var frames: [Frame] = []
         func push(_ token: String) {
             tokens.append(token)
             if tokens.count > 8 { tokens.removeFirst() }
+            if !frames.isEmpty { frames[frames.count - 1].argumentTokens.append(token) }
+        }
+        func isWord(_ token: String) -> Bool {
+            token.unicodeScalars.first.map { $0 == "_" || $0.properties.isAlphabetic } ?? false
         }
         while let c = peek() {
             if c == "/" && peek(1) == "/" {
@@ -104,7 +129,18 @@ struct SwiftLiteralScanner {
             } else if c == "/" && peek(1) == "*" {
                 skipBlockComment()
             } else if c == "\"" || (c == "#" && (peek(1) == "\"" || peek(1) == "#")) && startsRawLiteral() {
+                let first = frames.last.map { $0.argumentIndex == 0 && $0.argumentTokens.isEmpty } ?? false
                 scanLiteral(before: tokens)
+                if var frame = frames.last, frame.opener == "(" {
+                    literals[literals.count - 1].call = frame.call
+                    literals[literals.count - 1].argumentIndex = frame.argumentIndex
+                    let argument = frame.argumentTokens
+                    literals[literals.count - 1].isLabeled = argument.count >= 2 && isWord(argument[0]) && argument[1] == ":"
+                    if first && frame.call == "L" && literals[literals.count - 1].isLookupKey {
+                        frame.key = literals.count - 1
+                        frames[frames.count - 1] = frame
+                    }
+                }
                 push("\"…\"")
             } else if isIdentifierScalar(c) {
                 var word = ""
@@ -118,7 +154,30 @@ struct SwiftLiteralScanner {
                     if untilClosingParen && depth == 0 { advance(); return }
                     depth -= 1
                 }
-                push(String(c))
+                if c == "(" || c == "[" || c == "{" {
+                    // The callee: `f(`, `x.f(`, `f?(`; `L` only as a free function.
+                    var call: String?
+                    if c == "(" {
+                        var previous = tokens
+                        if previous.last == "?" { previous.removeLast() }
+                        if let name = previous.last, isWord(name) {
+                            call = name == "L" && previous.dropLast().last == "." ? nil : name
+                        }
+                    }
+                    push(String(c))
+                    frames.append(Frame(opener: Character(String(c)), call: call))
+                } else if c == ")" || c == "]" || c == "}" {
+                    if let frame = frames.popLast(), let key = frame.key {
+                        literals[key].argumentCount = frame.argumentIndex
+                    }
+                    push(String(c))
+                } else if c == ",", !frames.isEmpty {
+                    push(",")
+                    frames[frames.count - 1].argumentIndex += 1
+                    frames[frames.count - 1].argumentTokens = []
+                } else {
+                    push(String(c))
+                }
                 advance()
             }
         }
