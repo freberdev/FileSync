@@ -30,22 +30,23 @@ else
 fi
 
 if [ "${1:-}" = "--install" ]; then
-    for NAME in FileSync Filsynk; do
-        # Only ask a running app to quit; "tell application" would otherwise launch it.
-        if pgrep -x "$NAME" >/dev/null; then
-            osascript -e "tell application \"$NAME\" to quit" 2>/dev/null || true
-        fi
-        for _ in 1 2 3 4 5 6 7 8 9 10; do
-            pgrep -x "$NAME" >/dev/null || break
-            sleep 0.5
-        done
-        pkill -x "$NAME" 2>/dev/null || true
+    # This app's process, under its new or its old name; another app called FileSync is left alone.
+    RUNNING='/Contents/MacOS/(FileSync|Filsynk)$'
+    # Only ask a running app to quit; "tell application" would otherwise launch it.
+    if pgrep -f "$RUNNING" >/dev/null; then
+        osascript -e 'tell application id "com.freberdev.filsynk" to quit' 2>/dev/null || true
+    fi
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        pgrep -f "$RUNNING" >/dev/null || break
+        sleep 0.5
     done
+    pkill -f "$RUNNING" 2>/dev/null || true
     rm -rf /Applications/FileSync.app
     cp -R "$APP" /Applications/FileSync.app
     echo "Installed /Applications/FileSync.app"
     if [ -d /Applications/Filsynk.app ]; then
         rm -rf /Applications/Filsynk.app
         echo "Removed /Applications/Filsynk.app (the same app under its old name)"
+        echo "The app has a new name: check in its settings that \"Starta vid inloggning\" is still on."
     fi
 fi
