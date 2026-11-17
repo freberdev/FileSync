@@ -22,7 +22,11 @@ import Testing
         #expect(LanguageChoice(appleLanguages: ["sv_SE"]) == .swedish)
         // The first language the app has decides, as when macOS picks the localization.
         #expect(LanguageChoice(appleLanguages: ["de", "sv"]) == .swedish)
-        #expect(LanguageChoice(appleLanguages: ["de", "fr"]) == .system)
+        #expect(LanguageChoice(appleLanguages: ["nb", "sv"]) == .swedish)
+        #expect(LanguageChoice(appleLanguages: ["de", "en"]) == .english)
+        // A stored list without either language makes the app run in English.
+        #expect(LanguageChoice(appleLanguages: ["de"]) == .english)
+        #expect(LanguageChoice(appleLanguages: ["de", "fr"]) == .english)
     }
 
     @Test func localizationOfEachChoice() {

@@ -18,13 +18,14 @@ public enum LanguageChoice: String, CaseIterable, Sendable {
     }
 
     /// The choice a stored `AppleLanguages` value stands for: the first language in it that the app
-    /// has decides, as when macOS picks the localization. Nothing stored, or none of them, is `.system`.
+    /// has decides, as when macOS picks the localization. A list with neither makes the app run in
+    /// its development language, English. Only nothing stored, or an empty list, is `.system`.
     public init(appleLanguages: [String]?) {
-        switch Self.firstLocalization(in: appleLanguages ?? []) {
-        case "sv": self = .swedish
-        case "en": self = .english
-        default: self = .system
+        guard let languages = appleLanguages, !languages.isEmpty else {
+            self = .system
+            return
         }
+        self = Self.firstLocalization(in: languages) == "sv" ? .swedish : .english
     }
 
     /// The localization ("sv" or "en") the app runs in with this choice, given the system's languages.

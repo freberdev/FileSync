@@ -21,9 +21,11 @@ enum AppLanguage {
 
     /// True when the choice gives another language than the one the app is running in.
     static func needsRestart(_ choice: LanguageChoice) -> Bool {
-        let system = UserDefaults.standard.persistentDomain(forName: UserDefaults.globalDomain)?[key] as? [String]
+        // The user's list for all apps; `Locale.preferredLanguages` would include this app's own choice.
+        let system = CFPreferencesCopyValue(
+            key as CFString, kCFPreferencesAnyApplication, kCFPreferencesCurrentUser, kCFPreferencesAnyHost) as? [String]
         return choice.needsRestart(
             runningLocalization: Bundle.main.preferredLocalizations.first,
-            systemLanguages: system ?? Locale.preferredLanguages)
+            systemLanguages: system ?? [])
     }
 }
