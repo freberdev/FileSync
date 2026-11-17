@@ -1,5 +1,64 @@
 /* English. The key is the Swedish text in the code. */
 
+/* AppModel.swift */
+"FileSync startar" = "FileSync is starting";
+"Konfigurationsfilen kan inte läsas: %@" = "The configuration file cannot be read: %@";
+"Konfigurationsfilen kan inte läsas" = "The configuration file cannot be read";
+"Kunde inte lägga till som inloggningsobjekt: %@" = "Could not add as a login item: %@";
+"Kunde inte spara konfigurationen: %@" = "Could not save the configuration: %@";
+"Kunde inte spara konfigurationen" = "Could not save the configuration";
+"✓ Ansluten, rsync %@" = "✓ Connected, rsync %@";
+"Servern accepterar inte nyckeln ännu. Kör kommandot nedan i Terminal och testa igen." = "The server does not accept the key yet. Run the command below in Terminal and test again.";
+"Servern nås inte." = "The server cannot be reached.";
+"Servern behöver rsync 3 eller senare. %@" = "The server needs rsync 3 or later. %@";
+"Logg öppnad" = "Log opened";
+"Kunde inte spara mappens volym: %@" = "Could not save the volume of the folder: %@";
+
+/* FilsynkApp.swift */
+"FileSync — Inställningar" = "FileSync — Settings";
+
+/* MenuView.swift */
+"Synka nu" = "Sync now";
+"Fortsätt" = "Resume";
+"Pausa" = "Pause";
+"Inställningar…" = "Settings…";
+"Visa logg" = "Show log";
+"Avsluta FileSync" = "Quit FileSync";
+
+/* Notifier.swift */
+"Avisering (inte tillgänglig): %@" = "Notification (not available): %@";
+"Avisering nekad: %@" = "Notification denied: %@";
+"Avisering misslyckades (%@): %@" = "Notification failed (%@): %@";
+
+/* SettingsView.swift */
+"Konfigurationsfilen kan inte läsas. Rätta eller ta bort filen och starta om FileSync." = "The configuration file cannot be read. Correct or remove the file and restart FileSync.";
+"Server" = "Server";
+"Adress" = "Address";
+"användare@server" = "user@server";
+"Nyckel" = "Key";
+"Testa anslutning" = "Test connection";
+"Skriv serverns adress och tryck Testa anslutning. Första gången skapas en egen nyckel, och du får ett kommando att köra i Terminal för att lägga in den på servern." = "Type the server’s address and press Test connection. The first time, a key of its own is created, and you get a command to run in Terminal to add it on the server.";
+"Kopiera" = "Copy";
+"Mappar" = "Folders";
+"På Macen" = "On the Mac";
+"Mål" = "Destination";
+"Lägg till mål" = "Add destination";
+"Ta bort mål" = "Remove destination";
+"Inget tas bort på servern eller disken." = "Nothing is removed on the server or the disk.";
+"Lägg till ändå" = "Add anyway";
+"Avbryt" = "Cancel";
+"Mapp på Macen" = "Folder on the Mac";
+"Välj mapp…" = "Choose folder…";
+"Extern disk" = "External disk";
+"Sökväg på servern" = "Path on the server";
+"Välj mapp på disken…" = "Choose folder on the disk…";
+"Lägg till" = "Add";
+"Undantag (gäller alla mappar)" = "Exclusions (apply to all folders)";
+"Undantag" = "Exclusions";
+"Start" = "Startup";
+"Starta vid inloggning" = "Start at login";
+"Kunde inte ändra inloggningsobjektet" = "Could not change the login item";
+
 /* Config.swift */
 "Okänt slags mål: %@" = "Unknown kind of destination: %@";
 "Den lokala sökvägen \"%@\" måste vara absolut (börja med /)." = "The local path \"%@\" must be absolute (start with /).";

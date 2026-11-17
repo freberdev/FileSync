@@ -12,14 +12,14 @@ struct Notifier: Sendable {
     func post(_ notice: Notice) {
         let line = "\(notice.title): \(notice.body)"
         guard canNotify else {
-            log.write("Avisering (inte tillgänglig): \(line)")
+            log.write(L("Avisering (inte tillgänglig): %@", line))
             return
         }
         let log = self.log
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
             guard granted else {
-                log.write("Avisering nekad: \(line)")
+                log.write(L("Avisering nekad: %@", line))
                 return
             }
             let content = UNMutableNotificationContent()
@@ -27,7 +27,7 @@ struct Notifier: Sendable {
             content.body = notice.body
             let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
             center.add(request) { error in
-                if let error { log.write("Avisering misslyckades (\(error.localizedDescription)): \(line)") }
+                if let error { log.write(L("Avisering misslyckades (%@): %@", error.localizedDescription, line)) }
             }
         }
     }

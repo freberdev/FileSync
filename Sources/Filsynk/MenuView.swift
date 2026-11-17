@@ -16,14 +16,14 @@ struct MenuView: View {
             }
         }
         Divider()
-        Button("Synka nu") { model.syncNow() }
-        Button(model.isPaused ? "Fortsätt" : "Pausa") { model.togglePause() }
-        Button("Inställningar…") {
+        Button(L("Synka nu")) { model.syncNow() }
+        Button(model.isPaused ? L("Fortsätt") : L("Pausa")) { model.togglePause() }
+        Button(L("Inställningar…")) {
             openWindow(id: "settings")
             NSApplication.shared.activate(ignoringOtherApps: true)
         }
-        Button("Visa logg") { model.openLog() }
+        Button(L("Visa logg")) { model.openLog() }
         Divider()
-        Button("Avsluta FileSync") { model.quit() }
+        Button(L("Avsluta FileSync")) { model.quit() }
     }
 }

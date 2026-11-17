@@ -15,7 +15,7 @@ struct FilsynkApp: App {
         }
         .menuBarExtraStyle(.menu)
 
-        Window("FileSync — Inställningar", id: "settings") {
+        Window(L("FileSync — Inställningar"), id: "settings") {
             SettingsView(model: model)
         }
         .defaultLaunchBehavior(.suppressed)

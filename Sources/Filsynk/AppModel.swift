@@ -81,13 +81,13 @@ struct PendingFolder: Equatable {
     func start() {
         guard !hasStarted else { return }
         hasStarted = true
-        log.write("FileSync startar")
+        log.write(L("FileSync startar"))
         let firstStart = !FileManager.default.fileExists(atPath: store.url.path)
         do {
             config = try store.load()
         } catch {
-            log.write("Konfigurationsfilen kan inte läsas: \(error)")
-            configError = "Konfigurationsfilen kan inte läsas"
+            log.write(L("Konfigurationsfilen kan inte läsas: %@", String(describing: error)))
+            configError = L("Konfigurationsfilen kan inte läsas")
             publish()
             return
         }
@@ -101,7 +101,7 @@ struct PendingFolder: Equatable {
         if firstStart {
             isFirstStart = true
             if Bundle.main.bundlePath.hasPrefix("/Applications/") {
-                do { try LoginItem.setEnabled(true) } catch { log.write("Kunde inte lägga till som inloggningsobjekt: \(error)") }
+                do { try LoginItem.setEnabled(true) } catch { log.write(L("Kunde inte lägga till som inloggningsobjekt: %@", String(describing: error))) }
             }
         }
     }
@@ -109,13 +109,13 @@ struct PendingFolder: Equatable {
     /// Returns nil on success, otherwise the message to show the user.
     @discardableResult
     func apply(_ newConfig: Config) -> String? {
-        guard canSave else { return "Konfigurationsfilen kan inte läsas" }
+        guard canSave else { return L("Konfigurationsfilen kan inte läsas") }
         if let issue = newConfig.validate().first { return issue.message }
         do {
             try store.save(newConfig)
         } catch {
-            log.write("Kunde inte spara konfigurationen: \(error)")
-            return "Kunde inte spara konfigurationen"
+            log.write(L("Kunde inte spara konfigurationen: %@", String(describing: error)))
+            return L("Kunde inte spara konfigurationen")
         }
         config = newConfig
         if let engine {
@@ -164,12 +164,12 @@ struct PendingFolder: Equatable {
         let outcome = await flow.connect(config)
         if outcome.config != config { issue = apply(outcome.config) }
         switch outcome.result {
-        case .ok(let version): connection = .ok("✓ Ansluten, rsync \(version)")
+        case .ok(let version): connection = .ok(L("✓ Ansluten, rsync %@", version))
         case .authDenied:
             needsKeyInstall = true
-            connection = .problem("Servern accepterar inte nyckeln ännu. Kör kommandot nedan i Terminal och testa igen.")
-        case .unreachable: connection = .problem("Servern nås inte.")
-        case .unsupportedRsync(let m): connection = .problem("Servern behöver rsync 3 eller senare. \(m)")
+            connection = .problem(L("Servern accepterar inte nyckeln ännu. Kör kommandot nedan i Terminal och testa igen."))
+        case .unreachable: connection = .problem(L("Servern nås inte."))
+        case .unsupportedRsync(let m): connection = .problem(L("Servern behöver rsync 3 eller senare. %@", m))
         case .failed(let m): connection = .problem(m)
         }
     }
@@ -284,7 +284,7 @@ struct PendingFolder: Equatable {
 
     func openLog() {
         let url = FileLog.defaultURL
-        if !FileManager.default.fileExists(atPath: url.path) { log.write("Logg öppnad") }
+        if !FileManager.default.fileExists(atPath: url.path) { log.write(L("Logg öppnad")) }
         NSWorkspace.shared.open(url)
     }
 
@@ -310,7 +310,7 @@ struct PendingFolder: Equatable {
         guard !isLocked else { sourceVolumesPending = true; return }
         let updated = config.recordingSourceVolumes(mounted)
         guard updated != config else { return }
-        if let message = apply(updated) { log.write("Kunde inte spara mappens volym: \(message)") }
+        if let message = apply(updated) { log.write(L("Kunde inte spara mappens volym: %@", message)) }
     }
 
     private func recordSourceVolumesIfUnlocked() {

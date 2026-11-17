@@ -25,7 +25,7 @@ struct SettingsView: View {
         Form {
             if model.configError != nil {
                 Section {
-                    Text("Konfigurationsfilen kan inte läsas. Rätta eller ta bort filen och starta om FileSync.")
+                    Text(L("Konfigurationsfilen kan inte läsas. Rätta eller ta bort filen och starta om FileSync."))
                         .foregroundStyle(.red)
                     Text(model.configFilePath).textSelection(.enabled)
                 }
@@ -51,15 +51,15 @@ struct SettingsView: View {
     // MARK: Server
 
     private var serverSection: some View {
-        Section("Server") {
-            TextField("Adress", text: $serverDraft, prompt: Text("användare@server"))
+        Section(L("Server")) {
+            TextField(L("Adress"), text: $serverDraft, prompt: Text(L("användare@server")))
                 .focused($serverFocused)
                 .disabled(model.isLocked)
                 .onSubmit { model.setServer(serverDraft) }
                 .onChange(of: serverFocused) { _, focused in if !focused { model.setServer(serverDraft) } }
-            LabeledContent("Nyckel") { Text(model.config.identityFile).textSelection(.enabled) }
+            LabeledContent(L("Nyckel")) { Text(model.config.identityFile).textSelection(.enabled) }
             HStack {
-                Button("Testa anslutning") {
+                Button(L("Testa anslutning")) {
                     model.setServer(serverDraft)
                     guard model.config.server == serverDraft.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
                     Task { await model.testConnection() }
@@ -68,7 +68,7 @@ struct SettingsView: View {
                 connectionLine
             }
             if !model.config.isVerified && model.connection == .unknown {
-                Text("Skriv serverns adress och tryck Testa anslutning. Första gången skapas en egen nyckel, och du får ett kommando att köra i Terminal för att lägga in den på servern.")
+                Text(L("Skriv serverns adress och tryck Testa anslutning. Första gången skapas en egen nyckel, och du får ett kommando att köra i Terminal för att lägga in den på servern."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -78,7 +78,7 @@ struct SettingsView: View {
                         .textSelection(.enabled)
                         .font(.system(.body, design: .monospaced))
                     Spacer()
-                    Button("Kopiera") {
+                    Button(L("Kopiera")) {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(model.copyIdCommand, forType: .string)
                     }
@@ -101,17 +101,17 @@ struct SettingsView: View {
     private enum DestinationKind: Hashable { case server, disk }
 
     private var foldersSection: some View {
-        Section("Mappar") {
+        Section(L("Mappar")) {
             Table(model.destinationRows, selection: $selection) {
-                TableColumn("På Macen", value: \.local)
-                TableColumn("Mål", value: \.destination)
-                TableColumn("", value: \.state)
+                TableColumn(L("På Macen"), value: \.local)
+                TableColumn(L("Mål"), value: \.destination)
+                TableColumn(Text(verbatim: ""), value: \.state)
             }
             .frame(minHeight: 120)
 
             HStack {
                 Button { openForm() } label: { Image(systemName: "plus") }
-                    .accessibilityLabel("Lägg till mål")
+                    .accessibilityLabel(L("Lägg till mål"))
                     .disabled(model.isLocked)
                 Button {
                     if let row = model.destinationRows.first(where: { $0.id == selection }) {
@@ -119,23 +119,23 @@ struct SettingsView: View {
                         selection = nil
                     }
                 } label: { Image(systemName: "minus") }
-                    .accessibilityLabel("Ta bort mål")
+                    .accessibilityLabel(L("Ta bort mål"))
                     .disabled(selection == nil || model.isLocked)
             }
-            Text("Inget tas bort på servern eller disken.").font(.caption).foregroundStyle(.secondary)
+            Text(L("Inget tas bort på servern eller disken.")).font(.caption).foregroundStyle(.secondary)
 
             if showsForm { addForm }
 
             if let pending = model.pendingFolder {
                 ForEach(pending.warnings, id: \.self) { Text($0) }
                 HStack {
-                    Button("Lägg till ändå") {
+                    Button(L("Lägg till ändå")) {
                         Task {
                             if await model.confirmPendingFolder() { closeForm() }
                         }
                     }
                     .disabled(model.isBusy)
-                    Button("Avbryt") {
+                    Button(L("Avbryt")) {
                         model.cancelPendingFolder()
                         closeForm()
                     }
@@ -146,32 +146,32 @@ struct SettingsView: View {
     }
 
     @ViewBuilder private var addForm: some View {
-        LabeledContent("Mapp på Macen") {
-            Menu(formFolder.map { StatusPresentation.displayPath($0, home: home) } ?? "Välj mapp…") {
+        LabeledContent(L("Mapp på Macen")) {
+            Menu(formFolder.map { StatusPresentation.displayPath($0, home: home) } ?? L("Välj mapp…")) {
                 ForEach(model.config.folders) { folder in
                     Button(StatusPresentation.displayPath(folder.path, home: home)) { selectFolder(folder.path) }
                 }
                 Divider()
-                Button("Välj mapp…") { chooseFolder() }
+                Button(L("Välj mapp…")) { chooseFolder() }
             }
             .fixedSize()
             .disabled(model.isLocked)
         }
 
-        Picker("Mål", selection: $formKind) {
-            Text("Server").tag(DestinationKind.server)
-            Text("Extern disk").tag(DestinationKind.disk)
+        Picker(L("Mål"), selection: $formKind) {
+            Text(L("Server")).tag(DestinationKind.server)
+            Text(L("Extern disk")).tag(DestinationKind.disk)
         }
         .pickerStyle(.segmented)
         .disabled(model.isLocked)
 
         switch formKind {
         case .server:
-            TextField("Sökväg på servern", text: $formRemote)
+            TextField(L("Sökväg på servern"), text: $formRemote)
                 .disabled(model.isLocked)
         case .disk:
             HStack {
-                Button("Välj mapp på disken…") { chooseDiskFolder() }
+                Button(L("Välj mapp på disken…")) { chooseDiskFolder() }
                     .disabled(model.isLocked)
                 if let text = formDiskText {
                     Text(text).textSelection(.enabled)
@@ -180,9 +180,9 @@ struct SettingsView: View {
         }
 
         HStack {
-            Button("Lägg till") { submitForm() }
+            Button(L("Lägg till")) { submitForm() }
                 .disabled(model.isLocked || !formIsComplete)
-            Button("Avbryt") { closeForm() }
+            Button(L("Avbryt")) { closeForm() }
                 .disabled(model.isLocked)
             if model.isBusy { ProgressView().controlSize(.small) }
         }
@@ -257,8 +257,8 @@ struct SettingsView: View {
     // MARK: Excludes and start
 
     private var excludesSection: some View {
-        Section("Undantag (gäller alla mappar)") {
-            TextField("Undantag", text: $excludesDraft, prompt: Text("node_modules, *.tmp"))
+        Section(L("Undantag (gäller alla mappar)")) {
+            TextField(L("Undantag"), text: $excludesDraft, prompt: Text(verbatim: "node_modules, *.tmp"))
                 .focused($excludesFocused)
                 .disabled(model.isLocked)
                 .onSubmit { model.setExcludes(excludesDraft) }
@@ -267,15 +267,15 @@ struct SettingsView: View {
     }
 
     private var startSection: some View {
-        Section("Start") {
-            Toggle("Starta vid inloggning", isOn: Binding(
+        Section(L("Start")) {
+            Toggle(L("Starta vid inloggning"), isOn: Binding(
                 get: { launchAtLogin },
                 set: { on in
                     do {
                         try LoginItem.setEnabled(on)
                         loginError = nil
                     } catch {
-                        loginError = "Kunde inte ändra inloggningsobjektet"
+                        loginError = L("Kunde inte ändra inloggningsobjektet")
                     }
                     launchAtLogin = LoginItem.isEnabled
                 }))
