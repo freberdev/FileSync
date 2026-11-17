@@ -27,7 +27,7 @@ Skriptet bygger appen och lägger den i `build/Filsynk-<version>.dmg` tillsamman
 
 ### Release på GitHub
 
-Varje push till `main`, alltså också varje merge dit, kör testerna på GitHub, bygger diskavbilden och lägger upp den som en release med namnet `v<version>-<körningens nummer>`. Ändras bara dokumentation (`*.md` och `docs/`) körs ingenting. Flödet ligger i `.github/workflows/release.yml`.
+Varje push till `main`, alltså också varje merge dit, kör testerna på GitHub, bygger diskavbilden och lägger upp den som en release med namnet `v<version>-<körningens nummer>`. Ändras bara dokumentation (`*.md`, `docs/` och `LICENSE`) körs ingenting. Flödet ligger i `.github/workflows/release.yml`.
 
 Flödet går också att starta för hand, till exempel när hemligheterna just har lagts in: under Actions → Release → Run workflow, eller med
 
@@ -514,3 +514,7 @@ Gör detta en gång. Anteckna det som inte stämmer. `användare@server` och `/h
 6. **Felsökning:**
    - Om appen inte startar vid inloggning: kontrollera under Systeminställningar > Allmänt > Inloggningsobjekt att Filsynk finns och är påslagen, och att appen ligger i `/Applications`. Slå av och på "Starta vid inloggning" i Filsynks inställningar för att registrera den igen.
    - Om notiserna inte visas: kontrollera att Filsynk får visa notiser under Systeminställningar > Notiser. Varje notis skrivs också i loggen, så den går att läsa där via "Visa logg".
+
+## Licens
+
+Filsynk är fri programvara under MIT-licensen, se [LICENSE](LICENSE). Programmet tillhandahålls i befintligt skick, utan garantier: ha alltid mer än en kopia av det som är viktigt.
