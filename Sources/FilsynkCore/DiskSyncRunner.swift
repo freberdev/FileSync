@@ -31,25 +31,25 @@ public final class DiskSyncRunner: @unchecked Sendable {
         let volume: VolumeInfo
         switch VolumeLookup.find(uuid: disk.volumeUUID, in: volumes.mountedVolumes()) {
         case .failure(.notMounted): return .unreachable
-        case .failure(.duplicate): return .failed("Två inkopplade diskar har samma id.")
+        case .failure(.duplicate): return .failed(L("Två inkopplade diskar har samma id."))
         case .success(let found): volume = found
         }
-        guard volume.format.isSupported else { return .failed("Diskens format stöds inte.") }
-        guard !volume.isSystem else { return .failed("Systemdisken kan inte vara mål.") }
+        guard volume.format.isSupported else { return .failed(L("Diskens format stöds inte.")) }
+        guard !volume.isSystem else { return .failed(L("Systemdisken kan inte vara mål.")) }
 
         // 2. Källan.
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory),
               isDirectory.boolValue,
               FileManager.default.isReadableFile(atPath: folder.path) else {
-            return .failed("Mappen \(folder.path) saknas eller går inte att läsa")
+            return .failed(L("Mappen %@ saknas eller går inte att läsa", folder.path))
         }
         if let sourceID = folder.sourceVolumeUUID, !sourceID.isEmpty, !sourceIsOnVolume(folder.path, id: sourceID) {
             return .unreachable
         }
 
         // 3. Målmappen ska finnas och vara en som appen tagit i bruk. Den skapas aldrig här.
-        let unknown = SyncOutcome.failed("Mappen på disken känns inte igen. Lägg till målet igen.")
+        let unknown = SyncOutcome.failed(L("Mappen på disken känns inte igen. Lägg till målet igen."))
         guard Config.isValidDiskPath(disk.path),
               let destination = Self.destinationPath(mount: volume.mountPath, relative: disk.path),
               let recorded = DiskMarker.folder(in: destination),
@@ -66,8 +66,8 @@ public final class DiskSyncRunner: @unchecked Sendable {
         do {
             try RsyncCommand.diskExcludeFileContents(config).write(to: excludeURL, atomically: true, encoding: .utf8)
         } catch {
-            log?("\(folder.path): kunde inte skriva undantagsfilen: \(error)")
-            return .failed("Kunde inte förbereda synken")
+            log?(L("%@: kunde inte skriva undantagsfilen: %@", folder.path, String(describing: error)))
+            return .failed(L("Kunde inte förbereda synken"))
         }
         defer { try? FileManager.default.removeItem(at: excludeURL) }
 
@@ -78,8 +78,8 @@ public final class DiskSyncRunner: @unchecked Sendable {
         do {
             listing = try await process.run(dryRun.executable, dryRun.arguments)
         } catch {
-            log?("\(folder.path): kunde inte starta rsync: \(error)")
-            return .failed("Kunde inte starta rsync: \(error.localizedDescription)")
+            log?(L("%@: kunde inte starta rsync: %@", folder.path, String(describing: error)))
+            return .failed(L("Kunde inte starta rsync: %@", error.localizedDescription))
         }
         // 24: filer försvann medan rsync listade. Varje listad sökväg kontrolleras ändå mot källan.
         guard listing.exitCode == 0 || listing.exitCode == 24 else {
@@ -90,7 +90,7 @@ public final class DiskSyncRunner: @unchecked Sendable {
         guard isSameVolume(volume, disk: disk) else { return .unreachable }
 
         // Ett avbrott sätter inte igång något mer.
-        guard !Task.isCancelled else { return .failed("Synken avbröts") }
+        guard !Task.isCancelled else { return .failed(L("Synken avbröts")) }
 
         // 6. Flytta undan det som försvunnit.
         do {
@@ -102,15 +102,15 @@ public final class DiskSyncRunner: @unchecked Sendable {
             _ = try RaderatMover.move(
                 listed, source: folder.path, destination: destination, timestamp: timestamp)
         } catch {
-            return .failed("Kunde inte flytta undan raderade filer: \(error.localizedDescription)")
+            return .failed(L("Kunde inte flytta undan raderade filer: %@", error.localizedDescription))
         }
 
         // 7. Den riktiga körningen.
-        guard !Task.isCancelled else { return .failed("Synken avbröts") }
+        guard !Task.isCancelled else { return .failed(L("Synken avbröts")) }
         guard isSameVolume(volume, disk: disk) else { return .unreachable }
         var raderat = stat()
         if lstat(destination + "/Raderat", &raderat) == 0, raderat.st_mode & S_IFMT != S_IFDIR {
-            return .failed("Mappen Raderat på disken är inte en vanlig mapp.")
+            return .failed(L("Mappen Raderat på disken är inte en vanlig mapp."))
         }
         let real = RsyncCommand.diskSync(
             config: config, source: folder.path, destination: destination,
@@ -119,10 +119,10 @@ public final class DiskSyncRunner: @unchecked Sendable {
         do {
             let result = try await process.run(real.executable, real.arguments)
             let classified = localOutcome(exitCode: result.exitCode, stderr: result.stderr, volume: volume, disk: disk)
-            outcome = classified == .failed("Disken på servern är full") ? .failed("Disken är full") : classified
+            outcome = classified == .failed(OutcomeClassifier.diskFullMessage) ? .failed(L("Disken är full")) : classified
         } catch {
-            log?("\(folder.path): kunde inte starta rsync: \(error)")
-            outcome = .failed("Kunde inte starta rsync: \(error.localizedDescription)")
+            log?(L("%@: kunde inte starta rsync: %@", folder.path, String(describing: error)))
+            outcome = .failed(L("Kunde inte starta rsync: %@", error.localizedDescription))
         }
         if outcome != .success, !isSameVolume(volume, disk: disk) { return .unreachable }
         return outcome
@@ -136,7 +136,7 @@ public final class DiskSyncRunner: @unchecked Sendable {
         let last = stderr.split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .last { !$0.isEmpty }
-        guard let last else { return .failed("rsync avslutades med kod \(exitCode)") }
+        guard let last else { return .failed(L("rsync avslutades med kod %d", exitCode)) }
         return .failed(String(last.prefix(200)))
     }
 
@@ -231,10 +231,10 @@ public final class DiskSyncRunner: @unchecked Sendable {
 
     private func describe(_ outcome: SyncOutcome) -> String {
         switch outcome {
-        case .success: return "klar"
-        case .unreachable: return "disken nås inte"
-        case .authDenied: return "inloggningen nekades"
-        case .failed(let m): return "misslyckades: \(m)"
+        case .success: return L("klar")
+        case .unreachable: return L("disken nås inte")
+        case .authDenied: return L("inloggningen nekades")
+        case .failed(let m): return L("misslyckades: %@", m)
         }
     }
 }

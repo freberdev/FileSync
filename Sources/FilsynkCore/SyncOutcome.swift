@@ -9,8 +9,8 @@ public enum SyncOutcome: Equatable, Sendable {
     public var message: String? {
         switch self {
         case .success: return nil
-        case .unreachable: return "Servern nås inte"
-        case .authDenied: return "Inloggningen nekades"
+        case .unreachable: return L("Servern nås inte")
+        case .authDenied: return L("Inloggningen nekades")
         case .failed(let m): return m
         }
     }
@@ -28,17 +28,21 @@ public enum OutcomeClassifier {
         "Connection closed", "Connection reset", "Broken pipe",
     ]
 
+    /// The message of a sync that failed on a full disk. The disk runner tells this failure from
+    /// others by comparing with it, so both take the text from here.
+    public static var diskFullMessage: String { L("Disken på servern är full") }
+
     public static func classify(exitCode: Int32, stderr: String) -> SyncOutcome {
         if exitCode == 0 || exitCode == 24 { return .success }
         if authMarkers.contains(where: stderr.contains) || containsSSHPermissionDenied(stderr) {
             return .authDenied
         }
-        if stderr.contains("No space left on device") { return .failed("Disken på servern är full") }
+        if stderr.contains("No space left on device") { return .failed(diskFullMessage) }
         if unreachableMarkers.contains(where: stderr.contains) { return .unreachable }
         let last = stderr.split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .last { !$0.isEmpty }
-        guard let last else { return .failed("rsync avslutades med kod \(exitCode)") }
+        guard let last else { return .failed(L("rsync avslutades med kod %d", exitCode)) }
         return .failed(String(last.prefix(200)))
     }
 

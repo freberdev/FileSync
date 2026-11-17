@@ -54,7 +54,7 @@ public enum Destination: Codable, Equatable, Sendable, Identifiable {
                 path: try c.decode(String.self, forKey: .path)))
         case let kind:
             throw DecodingError.dataCorruptedError(
-                forKey: .kind, in: c, debugDescription: "Okänt slags mål: \(kind)")
+                forKey: .kind, in: c, debugDescription: L("Okänt slags mål: %@", kind))
         }
     }
 
@@ -449,35 +449,35 @@ public enum ConfigIssue: Equatable, Sendable {
     public var message: String {
         switch self {
         case .localPathNotAbsolute(let p):
-            return "Den lokala sökvägen \"\(p)\" måste vara absolut (börja med /)."
+            return L("Den lokala sökvägen \"%@\" måste vara absolut (börja med /).", p)
         case .nestedLocalPaths(let a, let b):
-            return "De lokala mapparna \"\(a)\" och \"\(b)\" ligger inuti varandra."
+            return L("De lokala mapparna \"%@\" och \"%@\" ligger inuti varandra.", a, b)
         case .nestedRemotePaths(let a, let b):
-            return "Mapparna på servern \"\(a)\" och \"\(b)\" ligger inuti varandra."
+            return L("Mapparna på servern \"%@\" och \"%@\" ligger inuti varandra.", a, b)
         case .unsafeRemotePath(let p):
-            return "Sökvägen på servern \"\(p)\" innehåller otillåtna tecken. Använd bokstäver, siffror och . _ - / + @ , = %."
+            return L("Sökvägen på servern \"%@\" innehåller otillåtna tecken. Använd bokstäver, siffror och . _ - / + @ , = %%.", p)
         case .unsafeServer(let s):
-            return "Serveradressen är ogiltig: \(s)"
+            return L("Serveradressen är ogiltig: %@", s)
         case .remotePathTooBroad(let p):
-            return "Sökvägen på servern \"\(p)\" är för bred. Välj en egen mapp."
+            return L("Sökvägen på servern \"%@\" är för bred. Välj en egen mapp.", p)
         case .remotePathNotAllowed(let p):
-            return "Sökvägen på servern \"\(p)\" går inte att använda. Välj en egen mapp utan . och .. och utanför ~/.ssh."
+            return L("Sökvägen på servern \"%@\" går inte att använda. Välj en egen mapp utan . och .. och utanför ~/.ssh.", p)
         case .unsafeExclude(let e):
-            return "Undantaget \"\(e)\" går inte att använda. Det får inte vara tomt eller börja med !, + , - , : eller . följt av mellanslag."
+            return L("Undantaget \"%@\" går inte att använda. Det får inte vara tomt eller börja med !, + , - , : eller . följt av mellanslag.", e)
         case .localPathHoldsAppFiles(let p):
-            return "Mappen \"\(p)\" innehåller FileSyncs egna filer (logg och inställningar) och skulle synkas om och om igen. Välj en undermapp."
+            return L("Mappen \"%@\" innehåller FileSyncs egna filer (logg och inställningar) och skulle synkas om och om igen. Välj en undermapp.", p)
         case .folderWithoutDestination(let p):
-            return "Mappen \(p) har inget mål."
+            return L("Mappen %@ har inget mål.", p)
         case .multipleServerDestinations(let p):
-            return "Mappen \(p) har fler än ett mål på servern."
+            return L("Mappen %@ har fler än ett mål på servern.", p)
         case .invalidDiskPath(let p):
-            return "Sökvägen på disken är ogiltig: \(p)"
+            return L("Sökvägen på disken är ogiltig: %@", p)
         case .missingVolumeID(let p):
-            return "Disken för \(p) saknar id."
+            return L("Disken för %@ saknar id.", p)
         case .nestedDiskPaths(let a, let b):
-            return "Mapparna på disken \"\(a)\" och \"\(b)\" ligger inuti varandra."
+            return L("Mapparna på disken \"%@\" och \"%@\" ligger inuti varandra.", a, b)
         case .unsafeIdentityFile(let p):
-            return "Nyckelfilen \"\(p)\" innehåller otillåtna tecken (mellanslag, citattecken, $, ` eller \\)."
+            return L("Nyckelfilen \"%@\" innehåller otillåtna tecken (mellanslag, citattecken, $, ` eller \\).", p)
         }
     }
 }

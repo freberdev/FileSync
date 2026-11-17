@@ -1,1 +1,115 @@
 /* Svenska. Nyckeln är den svenska texten i koden. */
+
+/* Config.swift */
+"Okänt slags mål: %@" = "Okänt slags mål: %@";
+"Den lokala sökvägen \"%@\" måste vara absolut (börja med /)." = "Den lokala sökvägen \"%@\" måste vara absolut (börja med /).";
+"De lokala mapparna \"%@\" och \"%@\" ligger inuti varandra." = "De lokala mapparna \"%@\" och \"%@\" ligger inuti varandra.";
+"Mapparna på servern \"%@\" och \"%@\" ligger inuti varandra." = "Mapparna på servern \"%@\" och \"%@\" ligger inuti varandra.";
+"Sökvägen på servern \"%@\" innehåller otillåtna tecken. Använd bokstäver, siffror och . _ - / + @ , = %%." = "Sökvägen på servern \"%@\" innehåller otillåtna tecken. Använd bokstäver, siffror och . _ - / + @ , = %%.";
+"Serveradressen är ogiltig: %@" = "Serveradressen är ogiltig: %@";
+"Sökvägen på servern \"%@\" är för bred. Välj en egen mapp." = "Sökvägen på servern \"%@\" är för bred. Välj en egen mapp.";
+"Sökvägen på servern \"%@\" går inte att använda. Välj en egen mapp utan . och .. och utanför ~/.ssh." = "Sökvägen på servern \"%@\" går inte att använda. Välj en egen mapp utan . och .. och utanför ~/.ssh.";
+"Undantaget \"%@\" går inte att använda. Det får inte vara tomt eller börja med !, + , - , : eller . följt av mellanslag." = "Undantaget \"%@\" går inte att använda. Det får inte vara tomt eller börja med !, + , - , : eller . följt av mellanslag.";
+"Mappen \"%@\" innehåller FileSyncs egna filer (logg och inställningar) och skulle synkas om och om igen. Välj en undermapp." = "Mappen \"%@\" innehåller FileSyncs egna filer (logg och inställningar) och skulle synkas om och om igen. Välj en undermapp.";
+"Mappen %@ har inget mål." = "Mappen %@ har inget mål.";
+"Mappen %@ har fler än ett mål på servern." = "Mappen %@ har fler än ett mål på servern.";
+"Sökvägen på disken är ogiltig: %@" = "Sökvägen på disken är ogiltig: %@";
+"Disken för %@ saknar id." = "Disken för %@ saknar id.";
+"Mapparna på disken \"%@\" och \"%@\" ligger inuti varandra." = "Mapparna på disken \"%@\" och \"%@\" ligger inuti varandra.";
+"Nyckelfilen \"%@\" innehåller otillåtna tecken (mellanslag, citattecken, $, ` eller \\)." = "Nyckelfilen \"%@\" innehåller otillåtna tecken (mellanslag, citattecken, $, ` eller \\).";
+
+/* ConnectionSetup.swift */
+"ssh-keygen avslutades med kod %d" = "ssh-keygen avslutades med kod %d";
+"Serveradressen är ogiltig" = "Serveradressen är ogiltig";
+"Kunde inte starta ssh: %@" = "Kunde inte starta ssh: %@";
+"Oväntat svar från servern" = "Oväntat svar från servern";
+"rsync finns inte på servern" = "rsync finns inte på servern";
+
+/* DestinationRows.swift */
+"Väntar" = "Väntar";
+"Inte inställd" = "Inte inställd";
+
+/* DiskSyncRunner.swift */
+"Två inkopplade diskar har samma id." = "Två inkopplade diskar har samma id.";
+"Diskens format stöds inte." = "Diskens format stöds inte.";
+"Systemdisken kan inte vara mål." = "Systemdisken kan inte vara mål.";
+"Mappen %@ saknas eller går inte att läsa" = "Mappen %@ saknas eller går inte att läsa";
+"Mappen på disken känns inte igen. Lägg till målet igen." = "Mappen på disken känns inte igen. Lägg till målet igen.";
+"%@: kunde inte skriva undantagsfilen: %@" = "%@: kunde inte skriva undantagsfilen: %@";
+"Kunde inte förbereda synken" = "Kunde inte förbereda synken";
+"%@: kunde inte starta rsync: %@" = "%@: kunde inte starta rsync: %@";
+"Kunde inte starta rsync: %@" = "Kunde inte starta rsync: %@";
+"Synken avbröts" = "Synken avbröts";
+"Kunde inte flytta undan raderade filer: %@" = "Kunde inte flytta undan raderade filer: %@";
+"Mappen Raderat på disken är inte en vanlig mapp." = "Mappen Raderat på disken är inte en vanlig mapp.";
+"Disken är full" = "Disken är full";
+"rsync avslutades med kod %d" = "rsync avslutades med kod %d";
+"klar" = "klar";
+"disken nås inte" = "disken nås inte";
+"inloggningen nekades" = "inloggningen nekades";
+"misslyckades: %@" = "misslyckades: %@";
+
+/* FolderInspector.swift */
+"Mappen innehåller %@ filer. Över 100 000 kan synken bli märkbar. Lägg till undantag eller välj en undermapp." = "Mappen innehåller %@ filer. Över 100 000 kan synken bli märkbar. Lägg till undantag eller välj en undermapp.";
+"%@ filer (%@) finns bara i iCloud och laddas ner vid första synken." = "%@ filer (%@) finns bara i iCloud och laddas ner vid första synken.";
+"Mappen \"Raderat\" i toppnivån säkerhetskopieras inte. Namnet är reserverat." = "Mappen \"Raderat\" i toppnivån säkerhetskopieras inte. Namnet är reserverat.";
+
+/* NoticePolicy.swift */
+"FileSync: inloggningen nekades" = "FileSync: inloggningen nekades";
+"FileSync: synken misslyckas" = "FileSync: synken misslyckas";
+"FileSync: osynkade ändringar" = "FileSync: osynkade ändringar";
+"Servern accepterar inte nyckeln. Öppna Inställningar och testa anslutningen." = "Servern accepterar inte nyckeln. Öppna Inställningar och testa anslutningen.";
+"%@ har inte kunnat säkerhetskopieras på över ett dygn." = "%@ har inte kunnat säkerhetskopieras på över ett dygn.";
+
+/* RaderatMover.swift */
+"Ogiltig tidsstämpel: %@" = "Ogiltig tidsstämpel: %@";
+"Mappen finns inte: %@" = "Mappen finns inte: %@";
+"Kunde inte skapa mappen %@: %@" = "Kunde inte skapa mappen %@: %@";
+"Kunde inte flytta %@: %@" = "Kunde inte flytta %@: %@";
+
+/* SetupFlow.swift */
+"Testa anslutningen först." = "Testa anslutningen först.";
+"Mappen har redan ett mål på servern." = "Mappen har redan ett mål på servern.";
+"Kunde inte skriva markören i %@: %@" = "Kunde inte skriva markören i %@: %@";
+"Kunde inte skriva till mappen på disken." = "Kunde inte skriva till mappen på disken.";
+"Mappen på disken måste vara tom. Skapa en ny mapp för säkerhetskopian." = "Mappen på disken måste vara tom. Skapa en ny mapp för säkerhetskopian.";
+"Disken saknar id och kan inte användas." = "Disken saknar id och kan inte användas.";
+"Välj en mapp på en extern disk." = "Välj en mapp på en extern disk.";
+"Disken måste vara formaterad som APFS, Mac OS Extended eller exFAT." = "Disken måste vara formaterad som APFS, Mac OS Extended eller exFAT.";
+"Mappen ligger inte på disken." = "Mappen ligger inte på disken.";
+"Välj en mapp på disken, inte diskens rot." = "Välj en mapp på disken, inte diskens rot.";
+"Mappen på disken finns inte." = "Mappen på disken finns inte.";
+"Mappen på Macen finns inte." = "Mappen på Macen finns inte.";
+"Mappen på Macen har en radbrytning i namnet och kan inte användas." = "Mappen på Macen har en radbrytning i namnet och kan inte användas.";
+"Mappen på disken och en bevakad mapp ligger inuti varandra." = "Mappen på disken och en bevakad mapp ligger inuti varandra.";
+"Mappen har redan det här målet." = "Mappen har redan det här målet.";
+"Kunde inte köra kommandot: %@" = "Kunde inte köra kommandot: %@";
+"Sökvägen på servern \"%@\" innehåller otillåtna tecken." = "Sökvägen på servern \"%@\" innehåller otillåtna tecken.";
+"Kunde inte skapa mappen på servern: %@" = "Kunde inte skapa mappen på servern: %@";
+"okänt fel" = "okänt fel";
+"Oväntat svar från servern: %@" = "Oväntat svar från servern: %@";
+"Välj en egen mapp på servern, inte hemkatalogen eller en mapp ovanför den." = "Välj en egen mapp på servern, inte hemkatalogen eller en mapp ovanför den.";
+"Kunde inte skapa nyckeln: %@" = "Kunde inte skapa nyckeln: %@";
+
+/* StatusPresentation.swift */
+"Allt synkat" = "Allt synkat";
+"Allt synkat · %@" = "Allt synkat · %@";
+"Synkar…" = "Synkar…";
+"Ändringar väntar" = "Ändringar väntar";
+"Väntar på servern" = "Väntar på servern";
+"Fel: %@" = "Fel: %@";
+"Pausad" = "Pausad";
+"Disken är inte inkopplad" = "Disken är inte inkopplad";
+"Server: %@" = "Server: %@";
+"Fel" = "Fel";
+"Inte inkopplad · aldrig synkad" = "Inte inkopplad · aldrig synkad";
+"Inte inkopplad · senast %@" = "Inte inkopplad · senast %@";
+
+/* SyncOutcome.swift */
+"Servern nås inte" = "Servern nås inte";
+"Inloggningen nekades" = "Inloggningen nekades";
+"Disken på servern är full" = "Disken på servern är full";
+
+/* SyncRunner.swift */
+"Fel sorts mål" = "Fel sorts mål";
+"servern nås inte" = "servern nås inte";

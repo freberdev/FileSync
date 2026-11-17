@@ -74,7 +74,7 @@ public actor SyncEngine {
         case duplicate
     }
 
-    private static let duplicateMessage = "Två inkopplade diskar har samma id."
+    private static let duplicateMessage = L("Två inkopplade diskar har samma id.")
 
     private struct Leaving {
         let mountPath: String

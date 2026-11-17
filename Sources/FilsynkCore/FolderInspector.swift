@@ -16,14 +16,14 @@ public struct FolderReport: Equatable, Sendable {
     public var warnings: [String] {
         var result: [String] = []
         if fileCount > FolderInspector.largeFolderThreshold {
-            result.append("Mappen innehåller \(fileCount) filer. Över 100 000 kan synken bli märkbar. Lägg till undantag eller välj en undermapp.")
+            result.append(L("Mappen innehåller %@ filer. Över 100 000 kan synken bli märkbar. Lägg till undantag eller välj en undermapp.", String(fileCount)))
         }
         if cloudOnlyCount > 0 {
             let size = ByteCountFormatter.string(fromByteCount: cloudOnlyBytes, countStyle: .file)
-            result.append("\(cloudOnlyCount) filer (\(size)) finns bara i iCloud och laddas ner vid första synken.")
+            result.append(L("%@ filer (%@) finns bara i iCloud och laddas ner vid första synken.", String(cloudOnlyCount), size))
         }
         if hasReservedRaderat {
-            result.append("Mappen \"Raderat\" i toppnivån säkerhetskopieras inte. Namnet är reserverat.")
+            result.append(L("Mappen \"Raderat\" i toppnivån säkerhetskopieras inte. Namnet är reserverat."))
         }
         return result
     }

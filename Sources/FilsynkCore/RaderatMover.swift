@@ -18,10 +18,10 @@ public enum RaderatMoverError: Error, Equatable, LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .invalidTimestamp(let t): return "Ogiltig tidsstämpel: \(t)"
-        case .missingFolder(let p): return "Mappen finns inte: \(p)"
-        case .cannotCreateFolder(let p, let e): return "Kunde inte skapa mappen \(p): \(String(cString: strerror(e)))"
-        case .moveFailed(let p, let e): return "Kunde inte flytta \(p): \(String(cString: strerror(e)))"
+        case .invalidTimestamp(let t): return L("Ogiltig tidsstämpel: %@", t)
+        case .missingFolder(let p): return L("Mappen finns inte: %@", p)
+        case .cannotCreateFolder(let p, let e): return L("Kunde inte skapa mappen %@: %@", p, String(cString: strerror(e)))
+        case .moveFailed(let p, let e): return L("Kunde inte flytta %@: %@", p, String(cString: strerror(e)))
         }
     }
 }

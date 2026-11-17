@@ -23,7 +23,7 @@ public enum DestinationRows {
                 if let current = byID[folder.path + "|" + destination.id] {
                     state = StatusPresentation.folderLabel(current, timeZone: timeZone)
                 } else {
-                    state = destination.isReady ? "Väntar" : "Inte inställd"
+                    state = destination.isReady ? L("Väntar") : L("Inte inställd")
                 }
                 rows.append(DestinationRow(
                     folderPath: folder.path,

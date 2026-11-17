@@ -7,20 +7,20 @@ public enum Notice: Equatable, Sendable {
 
     public var title: String {
         switch self {
-        case .authDenied: return "FileSync: inloggningen nekades"
-        case .repeatedFailure: return "FileSync: synken misslyckas"
-        case .stale: return "FileSync: osynkade ändringar"
+        case .authDenied: return L("FileSync: inloggningen nekades")
+        case .repeatedFailure: return L("FileSync: synken misslyckas")
+        case .stale: return L("FileSync: osynkade ändringar")
         }
     }
 
     public var body: String {
         switch self {
         case .authDenied:
-            return "Servern accepterar inte nyckeln. Öppna Inställningar och testa anslutningen."
+            return L("Servern accepterar inte nyckeln. Öppna Inställningar och testa anslutningen.")
         case .repeatedFailure(let folder, let message):
             return "\(folder): \(message)"
         case .stale(let folder):
-            return "\(folder) har inte kunnat säkerhetskopieras på över ett dygn."
+            return L("%@ har inte kunnat säkerhetskopieras på över ett dygn.", folder)
         }
     }
 }

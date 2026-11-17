@@ -49,7 +49,7 @@ public final class SyncRunner: SyncRunning, @unchecked Sendable {
     }
 
     public func sync(folder: FolderConfig, destination: Destination, config: Config, now: Date) async -> SyncOutcome {
-        guard case .server(let remotePath) = destination else { return .failed("Fel sorts mål") }
+        guard case .server(let remotePath) = destination else { return .failed(L("Fel sorts mål")) }
         let folder = FolderConfig(
             path: folder.path, destinations: [.server(path: remotePath)], sourceVolumeUUID: folder.sourceVolumeUUID)
         let started = Date()
@@ -64,7 +64,7 @@ public final class SyncRunner: SyncRunning, @unchecked Sendable {
         guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory),
               isDirectory.boolValue,
               FileManager.default.isReadableFile(atPath: folder.path) else {
-            return .failed("Mappen \(folder.path) saknas eller går inte att läsa")
+            return .failed(L("Mappen %@ saknas eller går inte att läsa", folder.path))
         }
 
         let timestamp = RsyncCommand.timestamp(nextTimestamp(for: now), timeZone: timeZone)
@@ -73,8 +73,8 @@ public final class SyncRunner: SyncRunning, @unchecked Sendable {
         do {
             try RsyncCommand.excludeFileContents(config).write(to: excludeURL, atomically: true, encoding: .utf8)
         } catch {
-            log?("\(folder.path): kunde inte skriva undantagsfilen: \(error)")
-            return .failed("Kunde inte förbereda synken")
+            log?(L("%@: kunde inte skriva undantagsfilen: %@", folder.path, String(describing: error)))
+            return .failed(L("Kunde inte förbereda synken"))
         }
         defer { try? FileManager.default.removeItem(at: excludeURL) }
 
@@ -85,8 +85,8 @@ public final class SyncRunner: SyncRunning, @unchecked Sendable {
             let result = try await process.run(invocation.executable, invocation.arguments)
             return OutcomeClassifier.classify(exitCode: result.exitCode, stderr: result.stderr)
         } catch {
-            log?("\(folder.path): kunde inte starta rsync: \(error)")
-            return .failed("Kunde inte starta rsync: \(error.localizedDescription)")
+            log?(L("%@: kunde inte starta rsync: %@", folder.path, String(describing: error)))
+            return .failed(L("Kunde inte starta rsync: %@", error.localizedDescription))
         }
     }
 
@@ -103,10 +103,10 @@ public final class SyncRunner: SyncRunning, @unchecked Sendable {
 
     private func describe(_ outcome: SyncOutcome) -> String {
         switch outcome {
-        case .success: return "klar"
-        case .unreachable: return "servern nås inte"
-        case .authDenied: return "inloggningen nekades"
-        case .failed(let m): return "misslyckades: \(m)"
+        case .success: return L("klar")
+        case .unreachable: return L("servern nås inte")
+        case .authDenied: return L("inloggningen nekades")
+        case .failed(let m): return L("misslyckades: %@", m)
         }
     }
 }

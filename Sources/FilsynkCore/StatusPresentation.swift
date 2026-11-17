@@ -79,15 +79,15 @@ public enum StatusPresentation {
     public static func headline(_ status: EngineStatus, timeZone: TimeZone) -> String {
         switch status.overall {
         case .synced:
-            guard let latest = status.connectedFolders.compactMap(\.lastSuccess).max() else { return "Allt synkat" }
-            return "Allt synkat · \(clockTime(latest, timeZone: timeZone))"
-        case .syncing: return "Synkar…"
-        case .pending: return "Ändringar väntar"
-        case .waitingForServer: return "Väntar på servern"
-        case .error(let message): return "Fel: \(message)"
-        case .paused: return "Pausad"
-        case .notConfigured: return "Inte inställd"
-        case .notConnected: return "Disken är inte inkopplad"
+            guard let latest = status.connectedFolders.compactMap(\.lastSuccess).max() else { return L("Allt synkat") }
+            return L("Allt synkat · %@", clockTime(latest, timeZone: timeZone))
+        case .syncing: return L("Synkar…")
+        case .pending: return L("Ändringar väntar")
+        case .waitingForServer: return L("Väntar på servern")
+        case .error(let message): return L("Fel: %@", message)
+        case .paused: return L("Pausad")
+        case .notConfigured: return L("Inte inställd")
+        case .notConnected: return L("Disken är inte inkopplad")
         }
     }
 
@@ -116,7 +116,7 @@ public enum StatusPresentation {
     public static func destinationLabel(_ destination: Destination, serverHome: String) -> String {
         switch destination {
         case .server(let path):
-            return "Server: " + (serverHome.isEmpty ? path : displayPath(path, home: serverHome))
+            return L("Server: %@", serverHome.isEmpty ? path : displayPath(path, home: serverHome))
         case .disk(let location):
             return "\(location.volumeName): \(location.path)"
         }
@@ -128,14 +128,14 @@ public enum StatusPresentation {
         case .synced:
             guard let last = folder.lastSuccess else { return "✓" }
             return "✓ \(clockTime(last, timeZone: timeZone))"
-        case .syncing: return "Synkar…"
-        case .pending: return "Väntar"
-        case .waitingForServer: return "Väntar på servern"
-        case .error: return "Fel"
-        case .notConfigured: return "Inte inställd"
+        case .syncing: return L("Synkar…")
+        case .pending: return L("Väntar")
+        case .waitingForServer: return L("Väntar på servern")
+        case .error: return L("Fel")
+        case .notConfigured: return L("Inte inställd")
         case .notConnected:
-            guard let last = folder.lastSuccess else { return "Inte inkopplad · aldrig synkad" }
-            return "Inte inkopplad · senast \(day(last, timeZone: timeZone))"
+            guard let last = folder.lastSuccess else { return L("Inte inkopplad · aldrig synkad") }
+            return L("Inte inkopplad · senast %@", day(last, timeZone: timeZone))
         }
     }
 

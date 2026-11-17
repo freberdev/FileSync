@@ -54,7 +54,7 @@ public struct SetupFlow: Sendable {
                 case .unreachable: return (.unreachable, updated)
                 case .authDenied: return (.authDenied, updated)
                 case .failed(let text): return (.failed(text), updated)
-                case .success: return (.failed("Oväntat svar från servern"), updated)
+                case .success: return (.failed(L("Oväntat svar från servern")), updated)
                 }
             } catch {
                 return (.failed(message(for: error)), updated)
@@ -70,13 +70,13 @@ public struct SetupFlow: Sendable {
     /// at the folder itself: the message to show, or nil when nothing speaks against it. Starts no process.
     public func addRejection(to config: Config, localPath: String, remoteEntered: String) -> String? {
         let entered = remoteEntered.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !config.isVerified { return "Testa anslutningen först." }
+        if !config.isVerified { return L("Testa anslutningen först.") }
         guard localPath.hasPrefix("/") else { return ConfigIssue.localPathNotAbsolute(localPath).message }
 
         var candidate = config
         if let index = Self.folderIndex(of: localPath, in: config) {
             if config.folders[index].destinations.contains(where: \.isServer) {
-                return "Mappen har redan ett mål på servern."
+                return L("Mappen har redan ett mål på servern.")
             }
             candidate.folders[index].remotePath = entered
         } else {
@@ -161,15 +161,15 @@ public struct SetupFlow: Sendable {
                 do {
                     try DiskMarker.write(in: plan.destination, folder: plan.folder)
                 } catch {
-                    log?("Kunde inte skriva markören i \(plan.destination): \(error)")
-                    return .rejected("Kunde inte skriva till mappen på disken.")
+                    log?(L("Kunde inte skriva markören i %@: %@", plan.destination, String(describing: error)))
+                    return .rejected(L("Kunde inte skriva till mappen på disken."))
                 }
             }
             return .added(plan.config)
         }
     }
 
-    private static let notEmptyText = "Mappen på disken måste vara tom. Skapa en ny mapp för säkerhetskopian."
+    private static let notEmptyText = L("Mappen på disken måste vara tom. Skapa en ny mapp för säkerhetskopian.")
 
     private struct Rejection: Error { var text: String }
 
@@ -180,26 +180,26 @@ public struct SetupFlow: Sendable {
         let picked = Self.resolvingExistingPart(of: pickedPath)
         guard let volume = VolumeLookup.volume(containing: picked, in: volumes),
               let uuid = volume.uuid, !uuid.isEmpty else {
-            return reject("Disken saknar id och kan inte användas.")
+            return reject(L("Disken saknar id och kan inte användas."))
         }
-        if volume.isSystem { return reject("Välj en mapp på en extern disk.") }
+        if volume.isSystem { return reject(L("Välj en mapp på en extern disk.")) }
         if !volume.format.isSupported {
-            return reject("Disken måste vara formaterad som APFS, Mac OS Extended eller exFAT.")
+            return reject(L("Disken måste vara formaterad som APFS, Mac OS Extended eller exFAT."))
         }
         guard let relative = VolumeLookup.relativePath(of: picked, on: volume) else {
-            return reject("Mappen ligger inte på disken.")
+            return reject(L("Mappen ligger inte på disken."))
         }
-        if relative.isEmpty { return reject("Välj en mapp på disken, inte diskens rot.") }
+        if relative.isEmpty { return reject(L("Välj en mapp på disken, inte diskens rot.")) }
 
         guard let destination = Self.realPath(pickedPath), Self.isDirectory(destination) else {
-            return reject("Mappen på disken finns inte.")
+            return reject(L("Mappen på disken finns inte."))
         }
         guard localPath.hasPrefix("/") else { return reject(ConfigIssue.localPathNotAbsolute(localPath).message) }
         guard let local = Self.realPath(localPath), Self.isDirectory(local) else {
-            return reject("Mappen på Macen finns inte.")
+            return reject(L("Mappen på Macen finns inte."))
         }
         if !DiskMarker.canRecord(local) {
-            return reject("Mappen på Macen har en radbrytning i namnet och kan inte användas.")
+            return reject(L("Mappen på Macen har en radbrytning i namnet och kan inte användas."))
         }
 
         // A folder with content is only taken over when its marker names this very folder; a marker
@@ -218,7 +218,7 @@ public struct SetupFlow: Sendable {
         for path in watched {
             let parts = Self.components(path)
             if Self.isPrefix(parts, of: destinationParts) || Self.isPrefix(destinationParts, of: parts) {
-                return reject("Mappen på disken och en bevakad mapp ligger inuti varandra.")
+                return reject(L("Mappen på disken och en bevakad mapp ligger inuti varandra."))
             }
         }
 
@@ -229,7 +229,7 @@ public struct SetupFlow: Sendable {
                 $0.volumeUUID.caseInsensitiveCompare(uuid) == .orderedSame && $0.path == relative
             }
             if same {
-                return reject("Mappen har redan det här målet.")
+                return reject(L("Mappen har redan det här målet."))
             }
             candidate.folders[index].destinations.append(.disk(location))
         } else {
@@ -302,23 +302,23 @@ public struct SetupFlow: Sendable {
     /// A short text for the user; anything unexpected is written to the log in full.
     private func message(for error: any Error) -> String {
         guard let error = error as? ConnectionError else {
-            log?("Kunde inte köra kommandot: \(error)")
-            return "Kunde inte köra kommandot: \(error.localizedDescription)"
+            log?(L("Kunde inte köra kommandot: %@", String(describing: error)))
+            return L("Kunde inte köra kommandot: %@", error.localizedDescription)
         }
         switch error {
         case .unsafePath(let path):
-            return "Sökvägen på servern \"\(path)\" innehåller otillåtna tecken."
+            return L("Sökvägen på servern \"%@\" innehåller otillåtna tecken.", path)
         case .unsafeServer:
-            return "Serveradressen är ogiltig"
+            return L("Serveradressen är ogiltig")
         case .remoteCommandFailed(let outcome):
-            return "Kunde inte skapa mappen på servern: \(outcome.message ?? "okänt fel")"
+            return L("Kunde inte skapa mappen på servern: %@", outcome.message ?? L("okänt fel"))
         case .unexpectedOutput(let line):
-            log?("Oväntat svar från servern: \(line)")
-            return "Oväntat svar från servern"
+            log?(L("Oväntat svar från servern: %@", line))
+            return L("Oväntat svar från servern")
         case .pathTooBroad:
-            return "Välj en egen mapp på servern, inte hemkatalogen eller en mapp ovanför den."
+            return L("Välj en egen mapp på servern, inte hemkatalogen eller en mapp ovanför den.")
         case .keyCreationFailed(let detail):
-            return "Kunde inte skapa nyckeln: \(detail)"
+            return L("Kunde inte skapa nyckeln: %@", detail)
         }
     }
 }

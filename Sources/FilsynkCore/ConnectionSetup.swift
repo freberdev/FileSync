@@ -33,7 +33,7 @@ public struct ConnectionSetup: Sendable {
             "/usr/bin/ssh-keygen", ["-t", "ed25519", "-N", "", "-C", "filsynk", "-f", path])
         guard result.exitCode == 0 else {
             let detail = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-            throw ConnectionError.keyCreationFailed(detail.isEmpty ? "ssh-keygen avslutades med kod \(result.exitCode)" : detail)
+            throw ConnectionError.keyCreationFailed(detail.isEmpty ? L("ssh-keygen avslutades med kod %d", result.exitCode) : detail)
         }
         return true
     }
@@ -43,13 +43,13 @@ public struct ConnectionSetup: Sendable {
     }
 
     public func check(server: String, identityFile: String) async -> ConnectionResult {
-        if server.isEmpty || !Config.isSafeServer(server) { return .failed("Serveradressen är ogiltig") }
+        if server.isEmpty || !Config.isSafeServer(server) { return .failed(L("Serveradressen är ogiltig")) }
         let result: ProcessResult
         do {
             result = try await remote(server: server, identityFile: identityFile, command: "rsync --version")
         } catch {
-            log?("Kunde inte starta ssh: \(error)")
-            return .failed("Kunde inte starta ssh: \(error.localizedDescription)")
+            log?(L("Kunde inte starta ssh: %@", String(describing: error)))
+            return .failed(L("Kunde inte starta ssh: %@", error.localizedDescription))
         }
 
         if result.exitCode == 0 {
@@ -64,10 +64,10 @@ public struct ConnectionSetup: Sendable {
         switch OutcomeClassifier.classify(exitCode: result.exitCode, stderr: result.stderr) {
         case .unreachable: return .unreachable
         case .authDenied: return .authDenied
-        case .success: return .failed("Oväntat svar från servern")
+        case .success: return .failed(L("Oväntat svar från servern"))
         case .failed(let message):
             if result.exitCode == 127 || result.stderr.contains("command not found") {
-                return .unsupportedRsync("rsync finns inte på servern")
+                return .unsupportedRsync(L("rsync finns inte på servern"))
             }
             return .failed(message)
         }

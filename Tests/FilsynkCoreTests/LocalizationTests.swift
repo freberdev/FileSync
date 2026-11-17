@@ -5,6 +5,7 @@ import Testing
 @Suite struct LocalizationTests {
     /// Texts that really are the same in Swedish and English.
     static let sameInBothLanguages: Set<String> = [
+        "Server: %@",
     ]
 
     @Test func lookupWithoutTableGivesTheSwedishText() {
