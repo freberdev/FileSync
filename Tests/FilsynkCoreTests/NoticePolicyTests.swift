@@ -106,13 +106,13 @@ import Testing
 
     @Test func noticeTexts() {
         let auth = Notice.authDenied(folder: "~/Sync")
-        #expect(auth.title == "Filsynk: inloggningen nekades")
+        #expect(auth.title == "FileSync: inloggningen nekades")
         #expect(auth.body == "Servern accepterar inte nyckeln. Öppna Inställningar och testa anslutningen.")
         let failure = Notice.repeatedFailure(folder: "~/Sync", message: "Disken på servern är full")
-        #expect(failure.title == "Filsynk: synken misslyckas")
+        #expect(failure.title == "FileSync: synken misslyckas")
         #expect(failure.body == "~/Sync: Disken på servern är full")
         let stale = Notice.stale(folder: "~/Sync")
-        #expect(stale.title == "Filsynk: osynkade ändringar")
+        #expect(stale.title == "FileSync: osynkade ändringar")
         #expect(stale.body == "~/Sync har inte kunnat säkerhetskopieras på över ett dygn.")
     }
 

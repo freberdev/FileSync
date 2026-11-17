@@ -24,6 +24,6 @@ struct MenuView: View {
         }
         Button("Visa logg") { model.openLog() }
         Divider()
-        Button("Avsluta Filsynk") { model.quit() }
+        Button("Avsluta FileSync") { model.quit() }
     }
 }

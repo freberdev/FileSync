@@ -81,7 +81,7 @@ struct PendingFolder: Equatable {
     func start() {
         guard !hasStarted else { return }
         hasStarted = true
-        log.write("Filsynk startar")
+        log.write("FileSync startar")
         let firstStart = !FileManager.default.fileExists(atPath: store.url.path)
         do {
             config = try store.load()

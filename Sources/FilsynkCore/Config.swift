@@ -465,7 +465,7 @@ public enum ConfigIssue: Equatable, Sendable {
         case .unsafeExclude(let e):
             return "Undantaget \"\(e)\" går inte att använda. Det får inte vara tomt eller börja med !, + , - , : eller . följt av mellanslag."
         case .localPathHoldsAppFiles(let p):
-            return "Mappen \"\(p)\" innehåller Filsynks egna filer (logg och inställningar) och skulle synkas om och om igen. Välj en undermapp."
+            return "Mappen \"\(p)\" innehåller FileSyncs egna filer (logg och inställningar) och skulle synkas om och om igen. Välj en undermapp."
         case .folderWithoutDestination(let p):
             return "Mappen \(p) har inget mål."
         case .multipleServerDestinations(let p):

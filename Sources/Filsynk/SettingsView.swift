@@ -25,7 +25,7 @@ struct SettingsView: View {
         Form {
             if model.configError != nil {
                 Section {
-                    Text("Konfigurationsfilen kan inte läsas. Rätta eller ta bort filen och starta om Filsynk.")
+                    Text("Konfigurationsfilen kan inte läsas. Rätta eller ta bort filen och starta om FileSync.")
                         .foregroundStyle(.red)
                     Text(model.configFilePath).textSelection(.enabled)
                 }

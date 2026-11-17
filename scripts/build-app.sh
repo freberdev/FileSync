@@ -1,15 +1,16 @@
 #!/bin/bash
-# Builds build/Filsynk.app from the release binary. With --install, also replaces /Applications/Filsynk.app.
+# Builds build/FileSync.app from the release binary. With --install, also replaces /Applications/FileSync.app.
+# The app used to be called Filsynk; --install also quits and removes /Applications/Filsynk.app.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 swift build -c release
 BIN="$(swift build -c release --show-bin-path)/Filsynk"
 
-APP=build/Filsynk.app
+APP=build/FileSync.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN" "$APP/Contents/MacOS/Filsynk"
+cp "$BIN" "$APP/Contents/MacOS/FileSync"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
@@ -28,16 +29,22 @@ else
 fi
 
 if [ "${1:-}" = "--install" ]; then
-    # Only ask a running app to quit; "tell application" would otherwise launch it.
-    if pgrep -x Filsynk >/dev/null; then
-        osascript -e 'tell application "Filsynk" to quit' 2>/dev/null || true
-    fi
-    for _ in 1 2 3 4 5 6 7 8 9 10; do
-        pgrep -x Filsynk >/dev/null || break
-        sleep 0.5
+    for NAME in FileSync Filsynk; do
+        # Only ask a running app to quit; "tell application" would otherwise launch it.
+        if pgrep -x "$NAME" >/dev/null; then
+            osascript -e "tell application \"$NAME\" to quit" 2>/dev/null || true
+        fi
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            pgrep -x "$NAME" >/dev/null || break
+            sleep 0.5
+        done
+        pkill -x "$NAME" 2>/dev/null || true
     done
-    pkill -x Filsynk 2>/dev/null || true
-    rm -rf /Applications/Filsynk.app
-    cp -R "$APP" /Applications/Filsynk.app
-    echo "Installed /Applications/Filsynk.app"
+    rm -rf /Applications/FileSync.app
+    cp -R "$APP" /Applications/FileSync.app
+    echo "Installed /Applications/FileSync.app"
+    if [ -d /Applications/Filsynk.app ]; then
+        rm -rf /Applications/Filsynk.app
+        echo "Removed /Applications/Filsynk.app (the same app under its old name)"
+    fi
 fi

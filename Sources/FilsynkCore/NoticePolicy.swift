@@ -7,9 +7,9 @@ public enum Notice: Equatable, Sendable {
 
     public var title: String {
         switch self {
-        case .authDenied: return "Filsynk: inloggningen nekades"
-        case .repeatedFailure: return "Filsynk: synken misslyckas"
-        case .stale: return "Filsynk: osynkade ändringar"
+        case .authDenied: return "FileSync: inloggningen nekades"
+        case .repeatedFailure: return "FileSync: synken misslyckas"
+        case .stale: return "FileSync: osynkade ändringar"
         }
     }
 

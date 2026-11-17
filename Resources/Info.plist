@@ -5,11 +5,13 @@
     <key>CFBundleIdentifier</key>
     <string>com.freberdev.filsynk</string>
     <key>CFBundleName</key>
-    <string>Filsynk</string>
+    <string>FileSync</string>
+    <key>CFBundleDisplayName</key>
+    <string>FileSync</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleExecutable</key>
-    <string>Filsynk</string>
+    <string>FileSync</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

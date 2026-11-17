@@ -1,17 +1,17 @@
-# Filsynk
+# FileSync
 
 ## Vad det är
 
-Filsynk är en liten menyradsapp för macOS (minst macOS 15) som säkerhetskopierar utvalda mappar på Macen till din egen Linux-server med rsync över SSH, och till en eller flera externa diskar. Den bevakar mapparna, skickar bara det som ändrats och flyttar det som raderas eller skrivs över undan i stället för att ta bort det. Servern och disken är backuper, inte arbetsytor: ändringar går bara från Macen till målet, aldrig tillbaka.
+FileSync är en liten menyradsapp för macOS (minst macOS 15) som säkerhetskopierar utvalda mappar på Macen till din egen Linux-server med rsync över SSH, och till en eller flera externa diskar. Den bevakar mapparna, skickar bara det som ändrats och flyttar det som raderas eller skrivs över undan i stället för att ta bort det. Servern och disken är backuper, inte arbetsytor: ändringar går bara från Macen till målet, aldrig tillbaka.
 
 ## Bygga och installera
 
 ```bash
 scripts/build-app.sh --install
-open /Applications/Filsynk.app
+open /Applications/FileSync.app
 ```
 
-Skriptet bygger `build/Filsynk.app`, signerar den och kopierar den till `/Applications`. Utan `--install` byggs bara `build/Filsynk.app`. Ett lokalt bygge är inte notariserat och går inte att dela med andra som det är; det gör releasen på GitHub, se nedan.
+Skriptet bygger `build/FileSync.app`, signerar den och kopierar den till `/Applications`. Utan `--install` byggs bara `build/FileSync.app`. En äldre `Filsynk.app` i Program är samma app under sitt gamla namn; `--install` tar bort den, och installerar du från en diskavbild tar du bort den för hand. Ett lokalt bygge är inte notariserat och går inte att dela med andra som det är; det gör releasen på GitHub, se nedan.
 
 Appikonen ligger i `Resources/AppIcon.icns` och ritas av `swift scripts/make-icon.swift`. Kör skriptet igen om du ändrar ritningen.
 
@@ -23,7 +23,7 @@ Appikonen ligger i `Resources/AppIcon.icns` och ritas av `swift scripts/make-ico
 scripts/build-dmg.sh
 ```
 
-Skriptet bygger appen och lägger den i `build/Filsynk-<version>.dmg` tillsammans med en genväg till Program. Öppna filen och dra Filsynk till Program.
+Skriptet bygger appen och lägger den i `build/FileSync-<version>.dmg` tillsammans med en genväg till Program. Öppna filen och dra FileSync till Program.
 
 ### Release på GitHub
 
@@ -82,7 +82,7 @@ Det här behövs, en gång:
 Kontrollera en nedladdad diskavbild:
 
 ```bash
-spctl --assess --type open --context context:primary-signature --verbose=2 Filsynk-<version>-<nummer>.dmg
+spctl --assess --type open --context context:primary-signature --verbose=2 FileSync-<version>-<nummer>.dmg
 ```
 
 Utskriften ska säga `accepted` och `source=Notarized Developer ID`.
@@ -169,14 +169,14 @@ För att gå tillbaka till signering utan certifikat tar du bort `.signing-ident
 Byggskriptet avslutar med `(signed with a certificate)` eller `(signed ad hoc)`. Den installerade appen kontrolleras så här:
 
 ```bash
-codesign -dv --verbose=2 /Applications/Filsynk.app
+codesign -dv --verbose=2 /Applications/FileSync.app
 ```
 
 - Med certifikat: `Authority=Apple Development: …` och `TeamIdentifier=` följt av team-id.
 - Utan certifikat: `Signature=adhoc` och `TeamIdentifier=not set`.
 
 ```bash
-codesign --verify --strict /Applications/Filsynk.app
+codesign --verify --strict /Applications/FileSync.app
 ```
 
 Ingen utskrift betyder att signaturen är giltig.
@@ -185,8 +185,8 @@ Ingen utskrift betyder att signaturen är giltig.
 
 Första gången appen signeras med ett certifikat räknar macOS den som en ny app. Detsamma gäller om du byter certifikat, team eller appens id. Gör då detta en gång:
 
-1. Slå på "Starta vid inloggning" i Filsynks inställningar. Det slås bara på av sig självt vid allra första start.
-2. Titta under Systeminställningar > Allmänt > Inloggningsobjekt och ta bort en eventuell äldre Filsynk-post.
+1. Slå på "Starta vid inloggning" i FileSyncs inställningar. Det slås bara på av sig självt vid allra första start.
+2. Titta under Systeminställningar > Allmänt > Inloggningsobjekt och ta bort en eventuell äldre FileSync- eller Filsynk-post.
 3. Godkänn notiser när macOS frågar, vilket sker första gången en notis ska visas.
 
 Därefter ligger tillstånden kvar mellan byggen.
@@ -333,9 +333,9 @@ Sökvägen på servern och serveradressen skickas till serverns skal, så bara o
 - **Serveradress:** bokstäverna a–z, siffror och `. _ - @ : [ ] %`, och den får inte börja med `-` (`user@192.168.1.10`, `server.example.com`, `user@[fe80::1%en0]`). Ett användarnamn med å, ä eller ö går alltså inte; `användare@server` i exemplen står bara för din egen adress.
 - **Nyckelfilen** får inte innehålla mellanslag, citattecken, `$`, `` ` `` eller `\`, och den fullständiga sökvägen (med hemkatalogen i stället för `~`) får inte innehålla mellanslag.
 - **Undantag** är vanliga mönster som `node_modules` eller `*.tmp`. Ett undantag får inte vara tomt eller börja med `!`, `+ `, `- `, `: ` eller `. `, eftersom rsync läser sådana rader som regler.
-- **Mappar på Macen** får inte innehålla Filsynks egna filer (`~/Library/Logs/Filsynk` och `~/Library/Application Support/Filsynk`); att bevaka hela hemkatalogen nekas därför.
+- **Mappar på Macen** får inte innehålla FileSyncs egna filer (`~/Library/Logs/Filsynk` och `~/Library/Application Support/Filsynk`); att bevaka hela hemkatalogen nekas därför.
 
-Avvägning: en nyckel utan lösenfras betyder att den som kommer åt ditt användarkonto på Macen också kan logga in på servern. Det är priset för att synken ska fungera obevakad. Nyckeln är egen för Filsynk, så du kan ta bort dess rad ur `~/.ssh/authorized_keys` på servern utan att något annat påverkas.
+Avvägning: en nyckel utan lösenfras betyder att den som kommer åt ditt användarkonto på Macen också kan logga in på servern. Det är priset för att synken ska fungera obevakad. Nyckeln är egen för FileSync, så du kan ta bort dess rad ur `~/.ssh/authorized_keys` på servern utan att något annat påverkas.
 
 Konfigurationen ligger i `~/Library/Application Support/Filsynk/config.json`. Varje mapp har en lista `destinations` med ett mål per post: `{"kind":"server","path":…}` eller `{"kind":"disk","volumeUUID":…,"volumeName":…,"path":…}`. En äldre fil med `remotePath` läses och skrivs om i den nya formen nästa gång något sparas. Loggen ligger i `~/Library/Logs/Filsynk/filsynk.log` ("Visa logg" i menyn). Går `config.json` inte att läsa visar appen ett fel, lämnar filen orörd och låser inställningarna tills filen rättats eller tagits bort och appen startats om.
 
@@ -462,17 +462,17 @@ Ytterligare ett prov kör hela kedjan mot riktiga volymer, utan någon fysisk di
 FILSYNK_DISK_IMAGE_TESTS=1 swift test --filter DiskImageTests
 ```
 
-Avbilderna monteras utan `-nobrowse`, eftersom Filsynk inte ser dolda volymer. Det tar ungefär en minut och en avbild kan synas en stund i Finder. Om en körning avbryts innan den hunnit städa: leta efter `filsynk-diskprov-` i utskriften från `hdiutil info` och koppla loss just den enheten med `hdiutil detach <enhet>`.
+Avbilderna monteras utan `-nobrowse`, eftersom FileSync inte ser dolda volymer. Det tar ungefär en minut och en avbild kan synas en stund i Finder. Om en körning avbryts innan den hunnit städa: leta efter `filsynk-diskprov-` i utskriften från `hdiutil info` och koppla loss just den enheten med `hdiutil detach <enhet>`.
 
 ## Checklista
 
 Gör detta en gång. Anteckna det som inte stämmer. `användare@server` och `/home/användare` står för din egen server, `Backupdisk` för din egen externa disk.
 
-1. **Installera.** `scripts/build-app.sh --install`, sedan `open /Applications/Filsynk.app`.
+1. **Installera.** `scripts/build-app.sh --install`, sedan `open /Applications/FileSync.app`.
 
 2. **Utseende.**
    - Ikonen syns i menyraden och ingen ikon syns i Dock.
-   - Menyn har statusrad överst (till exempel "Allt synkat · 14:32"), en rad per mål (till exempel `~/Sync → Server: ~/Sync   ✓ 14:32`), och sedan Synka nu, Pausa (blir Fortsätt), Inställningar…, Visa logg och Avsluta Filsynk.
+   - Menyn har statusrad överst (till exempel "Allt synkat · 14:32"), en rad per mål (till exempel `~/Sync → Server: ~/Sync   ✓ 14:32`), och sedan Synka nu, Pausa (blir Fortsätt), Inställningar…, Visa logg och Avsluta FileSync.
    - "Visa logg" öppnar `~/Library/Logs/Filsynk/filsynk.log`.
 
 3. **Inställningar** (ta först bort `~/Library/Application Support/Filsynk/config.json`):
@@ -496,8 +496,8 @@ Gör detta en gång. Anteckna det som inte stämmer. `användare@server` och `/h
    | 6 | `Pausa`, `echo y > ~/Sync/paus.txt`, vänta 90 s, `Fortsätt` | På servern finns ingen `paus.txt` under pausen. Den kommer fram direkt efter `Fortsätt` |
    | 7 | Dela nät från telefon, `echo z > ~/Sync/dyrt.txt`, vänta 90 s | På servern finns ingen `dyrt.txt`. `Synka nu` skickar den |
    | 8 | `echo l > ~/Sync/lock.txt`, stäng locket inom 30 s, vänta några minuter, öppna | På servern kommer `lock.txt` fram inom ungefär en minut efter att locket öppnats |
-   | 9 | På servern: flytta bort raden ur `~/.ssh/authorized_keys`, ändra en fil på Macen | Notis `Filsynk: inloggningen nekades`. Lägg tillbaka raden på servern och tryck `Synka nu`; synken lyckas |
-   | 10 | Logga ut och in | Filsynk startar av sig själv |
+   | 9 | På servern: flytta bort raden ur `~/.ssh/authorized_keys`, ändra en fil på Macen | Notis `FileSync: inloggningen nekades`. Lägg tillbaka raden på servern och tryck `Synka nu`; synken lyckas |
+   | 10 | Logga ut och in | FileSync startar av sig själv |
    | 11 | Låt appen stå orörd i 10 min, läs av i Aktivitetskontroll | CPU 0,0 % i vila, minne under 60 MB |
 
    Punkt 9 ändrar `authorized_keys` på servern och görs för hand där. Ta efteråt bort provfilerna ur `~/Sync` på Macen; de hamnar i `Raderat/` på servern, vilket är avsett.
@@ -512,9 +512,9 @@ Gör detta en gång. Anteckna det som inte stämmer. `användare@server` och `/h
    7. Koppla in en annan disk, med samma namn om det går: ingenting händer, ingen fråga och ingen synk.
 
 6. **Felsökning:**
-   - Om appen inte startar vid inloggning: kontrollera under Systeminställningar > Allmänt > Inloggningsobjekt att Filsynk finns och är påslagen, och att appen ligger i `/Applications`. Slå av och på "Starta vid inloggning" i Filsynks inställningar för att registrera den igen.
-   - Om notiserna inte visas: kontrollera att Filsynk får visa notiser under Systeminställningar > Notiser. Varje notis skrivs också i loggen, så den går att läsa där via "Visa logg".
+   - Om appen inte startar vid inloggning: kontrollera under Systeminställningar > Allmänt > Inloggningsobjekt att FileSync finns och är påslagen, och att appen ligger i `/Applications`. Slå av och på "Starta vid inloggning" i FileSyncs inställningar för att registrera den igen.
+   - Om notiserna inte visas: kontrollera att FileSync får visa notiser under Systeminställningar > Notiser. Varje notis skrivs också i loggen, så den går att läsa där via "Visa logg".
 
 ## Licens
 
-Filsynk är fri programvara under MIT-licensen, se [LICENSE](LICENSE). Programmet tillhandahålls i befintligt skick, utan garantier: ha alltid mer än en kopia av det som är viktigt.
+FileSync är fri programvara under MIT-licensen, se [LICENSE](LICENSE). Programmet tillhandahålls i befintligt skick, utan garantier: ha alltid mer än en kopia av det som är viktigt.
