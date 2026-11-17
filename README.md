@@ -4,7 +4,7 @@
 
 FileSync is a small menu-bar app for macOS (macOS 15 or later) that backs up chosen folders on your Mac to your own Linux server with rsync over SSH, and to one or more external disks. It watches the folders, sends only what has changed, and moves what is deleted or overwritten aside instead of removing it. The server and the disk hold backups, not working copies: changes go only from the Mac to the destination, never back.
 
-The app is in Swedish and English. It follows the Mac's language and uses English for every other language. Settings has a Language picker with the options Same as the system, Svenska and English. A change takes effect the next time FileSync starts.
+The app is in Swedish and English. It follows the Mac's language and uses English for every other language. Settings has a Language picker with the options System language, Svenska and English. A change takes effect the next time FileSync starts.
 
 ## Build and install
 
@@ -13,7 +13,7 @@ scripts/build-app.sh --install
 open /Applications/FileSync.app
 ```
 
-The script builds `build/FileSync.app`, signs it and copies it to `/Applications`. Without `--install` it only builds `build/FileSync.app`. An older `Filsynk.app` in Applications is the same app under its old name; `--install` removes it, and if you install from a disk image you remove it by hand. A local build is not notarized and cannot be shared with others as it is; the release on GitHub does that, see below.
+The script builds `build/FileSync.app`, signs it and copies it to `/Applications`. Without `--install` it only builds `build/FileSync.app`. An older `Filsynk.app` in Applications is the same app under its old name; `--install` removes it, and if you install from a disk image you remove it by hand. The app has a new name, so after the first install check in the settings that "Start at login" is still on. A local build is not notarized and cannot be shared with others as it is; the release on GitHub does that, see below.
 
 The app icon is in `Resources/AppIcon.icns` and is drawn by `swift scripts/make-icon.swift`. Run the script again if you change the drawing.
 
@@ -331,7 +331,7 @@ To replace the key, revoke the old one and go through steps 2 to 5 again.
 
 The path on the server and the server address are passed to the server's shell, so only harmless characters are accepted:
 
-- **Path on the server:** letters (including å, ä, ö) and digits, and `. _ - / + @ , = %`. A `~` may only come first and be followed by `/` or nothing (`~/Backup-2026/Mac_1` is fine, `~/R&D` or `~/Photo*` is refused).
+- **Server path:** letters (including å, ä, ö) and digits, and `. _ - / + @ , = %`. A `~` may only come first and be followed by `/` or nothing (`~/Backup-2026/Mac_1` is fine, `~/R&D` or `~/Photo*` is refused).
 - **Server address:** the letters a–z, digits and `. _ - @ : [ ] %`, and it must not start with `-` (`user@192.168.1.10`, `server.example.com`, `user@[fe80::1%en0]`). A user name with å, ä or ö therefore does not work; `user@server` in the examples only stands for your own address.
 - **The key file** must not contain spaces, quotation marks, `$`, `` ` `` or `\`, and the full path (with the home directory instead of `~`) must not contain spaces.
 - **Exclusions** are ordinary patterns such as `node_modules` or `*.tmp`. An exclusion must not be empty or start with `!`, `+ `, `- `, `: ` or `. `, because rsync reads such lines as rules.
@@ -363,7 +363,7 @@ The contents of the folder are mirrored as they are. `Raderat/` is at the top le
   report.docx
   Projects/
     notes.md
-  Raderat/                        <- exists only on the server
+  Raderat/                        <- not on the Mac
     2026-11-17_143205/            <- one sync run (local time, start)
       report.docx                 <- previous version, overwritten
       Projects/
@@ -484,7 +484,7 @@ Do this once. Note down anything that does not match. `user@server` and `/home/u
    4. Add a folder that is inside `~/Sync`: red error, nothing is saved. Enter `~` or `~/R&D` as the folder on the server: refused.
    5. Add a folder with files that are only in iCloud (or a folder of its own called `Raderat` at the top level): the warning is shown with Add anyway and Cancel. Cancel saves nothing; Add anyway adds the folder and the sync only starts then.
    6. Type `node_modules, *.tmp` in Exclusions: `config.json` has `"exclude": ["node_modules", "*.tmp"]`. Type `!` in Exclusions: red error, nothing is saved.
-   (Put the right server address back and test the connection again after item 3.)
+   (After step 3 above, the address that does not exist, put the right server address back and test the connection again.)
 
 4. **Test all the way** (the first time anything is written in `~/Sync` on the server). What is checked on the server is done with `ssh user@server 'ls -R ~/Sync'` or `cat`:
 
