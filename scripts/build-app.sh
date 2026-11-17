@@ -13,6 +13,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/FileSync"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+cp -R Resources/sv.lproj Resources/en.lproj "$APP/Contents/Resources/"
 
 # Signing identity: $FILSYNK_SIGN_IDENTITY, else the first line of .signing-identity, else ad hoc.
 # A certificate keeps macOS permissions (notifications, login item, local network) across rebuilds.
